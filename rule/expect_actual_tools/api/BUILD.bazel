@@ -2,10 +2,6 @@ load("@rules_java//java:defs.bzl", "java_library")
 
 java_library(
     name = "api",
-    srcs = [
-        "ActualConstructor.java",
-        "ActualImpl.java",
-        "ExpectFactory.java",
-    ],
+    srcs = glob(["*.java"]),
     visibility = ["//visibility:public"],
 )

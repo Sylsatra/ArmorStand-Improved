@@ -28,7 +28,7 @@ import java.util.Set;
 
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 @SupportedAnnotationTypes({"top.fifthlight.mergetools.api.ActualImpl"})
-public class ActualAnnotationProcessor extends AbstractProcessor {
+public class ActualImplAnnotationProcessor extends AbstractProcessor {
     private Elements elementUtils;
 
     @Override
@@ -95,7 +95,7 @@ public class ActualAnnotationProcessor extends AbstractProcessor {
     private boolean generateActualManifest(String expectFullQualifiedName, ActualData actualData) {
         try {
             var mapper = new ObjectMapper();
-            var filePath = "META-INF/actuals/" + expectFullQualifiedName + ".json";
+            var filePath = "META-INF/actuals/factories/" + expectFullQualifiedName + ".json";
             var resource = processingEnv.getFiler().createResource(StandardLocation.CLASS_OUTPUT, "", filePath);
 
             try (var writer = resource.openWriter()) {

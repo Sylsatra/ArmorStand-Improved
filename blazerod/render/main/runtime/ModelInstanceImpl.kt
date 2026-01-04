@@ -22,6 +22,7 @@ import top.fifthlight.blazerod.util.cowbuffer.copy
 import top.fifthlight.blazerod.util.iterator.mapToArray
 import top.fifthlight.mergetools.api.ActualConstructor
 import top.fifthlight.mergetools.api.ActualImpl
+import top.fifthlight.mergetools.api.ActualType
 import java.util.function.Consumer
 
 @ActualImpl(ModelInstance::class)
@@ -178,8 +179,8 @@ class ModelInstanceImpl(
 
     override fun getCameraTransform(index: Int) = modelData.cameraTransforms.getOrNull(index)
 
-    override fun debugRender(viewProjectionMatrix: Matrix4fc, bufferSource: MultiBufferSource) {
-        scene.debugRender(this, viewProjectionMatrix, bufferSource)
+    override fun debugRender(viewProjectionMatrix: Matrix4fc, @ActualType(MultiBufferSource::class) bufferSource: Any) {
+        scene.debugRender(this, viewProjectionMatrix, bufferSource as MultiBufferSource)
     }
 
     override fun updateRenderData() {

@@ -6,6 +6,7 @@ import net.minecraft.world.entity.player.Player
 import top.fifthlight.blazerod.api.animation.AnimationContexts
 import top.fifthlight.mergetools.api.ActualConstructor
 import top.fifthlight.mergetools.api.ActualImpl
+import top.fifthlight.mergetools.api.ActualType
 
 @ActualImpl(AnimationContexts::class)
 object AnimationContextsImpl : AnimationContexts {
@@ -15,9 +16,12 @@ object AnimationContextsImpl : AnimationContexts {
 
     override fun base() = BaseAnimationContext()
 
-    override fun entity(entity: Entity) = EntityAnimationContext(entity)
+    override fun entity(@ActualType(Entity::class) entity: Any) =
+        EntityAnimationContext(entity as Entity)
 
-    override fun livingEntity(entity: LivingEntity) = LivingEntityAnimationContext(entity)
+    override fun livingEntity(@ActualType(LivingEntity::class) entity: Any) =
+        LivingEntityAnimationContext(entity as LivingEntity)
 
-    override fun player(player: Player) = PlayerEntityAnimationContext(player)
+    override fun player(@ActualType(Player::class) player: Any) =
+        PlayerEntityAnimationContext(player as Player)
 }

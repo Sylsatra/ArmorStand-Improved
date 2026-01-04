@@ -1,16 +1,14 @@
 package top.fifthlight.blazerod.api.animation
 
-import net.minecraft.world.entity.Entity
-import net.minecraft.world.entity.LivingEntity
-import net.minecraft.world.entity.player.Player
 import top.fifthlight.blazerod.model.animation.AnimationContext
 import top.fifthlight.mergetools.api.ExpectFactory
+import top.fifthlight.mergetools.api.ExpectType
 
 interface AnimationContexts {
     fun base(): AnimationContext
-    fun entity(entity: Entity): AnimationContext
-    fun livingEntity(entity: LivingEntity): AnimationContext
-    fun player(player: Player): AnimationContext
+    fun entity(@ExpectType("Entity") entity: Any): AnimationContext
+    fun livingEntity(@ExpectType("LivingEntity") entity: Any): AnimationContext
+    fun player(@ExpectType("Player") player: Any): AnimationContext
 
     @ExpectFactory
     interface Factory {

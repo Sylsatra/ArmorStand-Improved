@@ -1,4 +1,4 @@
-package top.fifthlight.mergetools;
+package top.fifthlight.mergetools.merger;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.objectweb.asm.ClassWriter;
@@ -24,8 +24,8 @@ public class ExpectActualMerger {
     private static final HashMap<String, ActualData> actualDataMap = new HashMap<>();
     private static final ArrayList<JarFile> jarFiles = new ArrayList<>();
     private static final ObjectMapper mapper = new ObjectMapper();
-    private static final String expectPrefix = "META-INF/expects/";
-    private static final String actualPrefix = "META-INF/actuals/";
+    private static final String expectFactoriesPrefix = "META-INF/expects/factories";
+    private static final String actualFactoriesPrefix = "META-INF/actuals/factories";
     private static Path outputPath;
     private static final HashMap<String, String> manifestEntries = new HashMap<>();
 
@@ -80,22 +80,22 @@ public class ExpectActualMerger {
                     while (enumerator.hasMoreElements()) {
                         entry = enumerator.nextElement();
                         var name = entry.getName();
-                        if (name.startsWith(expectPrefix) && name.endsWith(".json")) {
+                        if (name.startsWith(expectFactoriesPrefix) && name.endsWith(".json")) {
                             try (var inputStream = new BufferedInputStream(jarFile.getInputStream(entry));
                                  var reader = new InputStreamReader(inputStream)) {
                                 var expectData = mapper.readValue(reader, ExpectData.class);
-                                var interfaceFullQualifiedName = name.substring(expectPrefix.length(), name.length() - ".json".length());
+                                var interfaceFullQualifiedName = name.substring(expectFactoriesPrefix.length(), name.length() - ".json".length());
                                 var interfaceClassPath = internalNameToPath(expectData.interfaceName());
                                 var interfaceFactoryPath = interfaceClassPath + "Factory.class";
                                 mergeEntries.put(interfaceFactoryPath, new MergeEntry.ExpectManifest(interfaceFullQualifiedName, expectData));
                                 expectDataMap.put(interfaceFullQualifiedName, expectData);
                                 factoryClasses.add(interfaceFactoryPath);
                             }
-                        } else if (name.startsWith(actualPrefix) && name.endsWith(".json")) {
+                        } else if (name.startsWith(actualFactoriesPrefix) && name.endsWith(".json")) {
                             try (var inputStream = new BufferedInputStream(jarFile.getInputStream(entry));
                                  var reader = new InputStreamReader(inputStream)) {
                                 var actualData = mapper.readValue(reader, ActualData.class);
-                                var interfaceFullQualifiedName = name.substring(actualPrefix.length(), name.length() - ".json".length());
+                                var interfaceFullQualifiedName = name.substring(actualFactoriesPrefix.length(), name.length() - ".json".length());
                                 if (actualDataMap.containsKey(interfaceFullQualifiedName)) {
                                     throw new IllegalStateException("Duplicate actual data: " + interfaceFullQualifiedName);
                                 }

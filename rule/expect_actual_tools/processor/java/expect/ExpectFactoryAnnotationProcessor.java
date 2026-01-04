@@ -19,7 +19,7 @@ import java.util.Set;
 
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
 @SupportedAnnotationTypes("top.fifthlight.mergetools.api.ExpectFactory")
-public class ExpectAnnotationProcessor extends AbstractProcessor {
+public class ExpectFactoryAnnotationProcessor extends AbstractProcessor {
     private Elements elementUtils;
 
     @Override
@@ -76,7 +76,7 @@ public class ExpectAnnotationProcessor extends AbstractProcessor {
     private boolean generateExpectManifest(String interfaceFullQualifiedName, ExpectData expectData) {
         try {
             var mapper = new ObjectMapper();
-            var filePath = "META-INF/expects/" + interfaceFullQualifiedName + ".json";
+            var filePath = "META-INF/expects/factories/" + interfaceFullQualifiedName + ".json";
             var resource = processingEnv.getFiler().createResource(StandardLocation.CLASS_OUTPUT, "", filePath);
 
             try (var writer = resource.openWriter()) {

@@ -240,7 +240,7 @@ merge_library_jar = rule(
             doc = "Manifest entries to be include in final JAR.",
         ),
         "_merge_jar_executable": attr.label(
-            default = Label("@//rule/merge_expect_actual_jar"),
+            default = Label("@//rule/expect_actual_tools/merger"),
             executable = True,
             cfg = "exec",
         ),

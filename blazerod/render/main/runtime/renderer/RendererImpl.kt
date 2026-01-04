@@ -15,12 +15,15 @@ import top.fifthlight.blazerod.runtime.node.component.PrimitiveComponent
 import top.fifthlight.blazerod.runtime.resource.RenderPrimitive
 import top.fifthlight.mergetools.api.ActualConstructor
 import top.fifthlight.mergetools.api.ActualImpl
+import top.fifthlight.mergetools.api.ActualType
 
 @ActualImpl(Renderer::class)
 abstract class RendererImpl<R : RendererImpl<R, T>, T : Renderer.Type<R, T>> : Renderer<R, T> {
     override fun render(
-        colorFrameBuffer: GpuTextureView,
-        depthFrameBuffer: GpuTextureView?,
+        @ActualType(GpuTextureView::class)
+        colorFrameBuffer: Any,
+        @ActualType(GpuTextureView::class)
+        depthFrameBuffer: Any?,
         task: RenderTask,
         scene: RenderScene,
     ) {
@@ -28,8 +31,8 @@ abstract class RendererImpl<R : RendererImpl<R, T>, T : Renderer.Type<R, T>> : R
         val scene = (scene as RenderSceneImpl)
         for (component in scene.primitiveComponents) {
             render(
-                colorFrameBuffer = colorFrameBuffer,
-                depthFrameBuffer = depthFrameBuffer,
+                colorFrameBuffer = colorFrameBuffer as GpuTextureView,
+                depthFrameBuffer = depthFrameBuffer as GpuTextureView?,
                 scene = scene,
                 primitive = component.primitive,
                 primitiveIndex = component.primitiveIndex,
@@ -93,7 +96,19 @@ object RendererTypeHolderImpl : RendererTypeHolder {
 }
 
 abstract class ScheduledRendererImpl<R, T : Renderer.Type<R, T>> : RendererImpl<R, T>(), ScheduledRenderer<R, T>
-        where R : ScheduledRenderer<R, T>, R : RendererImpl<R, T>
+        where R : ScheduledRenderer<R, T>, R : RendererImpl<R, T> {
+    override fun executeTasks(
+        @ActualType(GpuTextureView::class)
+        colorFrameBuffer: Any,
+        @ActualType(GpuTextureView::class)
+        depthFrameBuffer: Any?,
+    ) = executeTasks(colorFrameBuffer as GpuTextureView, depthFrameBuffer as GpuTextureView?)
+
+    abstract fun executeTasks(
+        colorFrameBuffer: GpuTextureView,
+        depthFrameBuffer: GpuTextureView?,
+    )
+}
 
 abstract class TaskMapScheduledRenderer<R, T : Renderer.Type<R, T>> :
     ScheduledRendererImpl<R, T>()
@@ -102,7 +117,10 @@ abstract class TaskMapScheduledRenderer<R, T : Renderer.Type<R, T>> :
 
     override fun schedule(task: RenderTask) = taskMap.addTask(task as RenderTaskImpl)
 
-    override fun executeTasks(colorFrameBuffer: GpuTextureView, depthFrameBuffer: GpuTextureView?) {
+    override fun executeTasks(
+        colorFrameBuffer: GpuTextureView,
+        depthFrameBuffer: GpuTextureView?,
+    ) {
         taskMap.executeTasks { scene, tasks ->
             when (tasks.size) {
                 0 -> {}
@@ -113,8 +131,8 @@ abstract class TaskMapScheduledRenderer<R, T : Renderer.Type<R, T>> :
                 else -> {
                     for (component in scene.primitiveComponents) {
                         renderInstanced(
-                            colorFrameBuffer = colorFrameBuffer,
-                            depthFrameBuffer = depthFrameBuffer,
+                            colorFrameBuffer = colorFrameBuffer as GpuTextureView,
+                            depthFrameBuffer = depthFrameBuffer as GpuTextureView?,
                             tasks = tasks,
                             scene = scene,
                             component = component,

@@ -1,9 +1,9 @@
 package top.fifthlight.blazerod.api.render
 
-import com.mojang.blaze3d.textures.GpuTextureView
 import top.fifthlight.blazerod.api.resource.RenderScene
 import top.fifthlight.blazerod.api.resource.RenderTask
 import top.fifthlight.mergetools.api.ExpectFactory
+import top.fifthlight.mergetools.api.ExpectType
 
 interface Renderer<R : Renderer<R, T>, T : Renderer.Type<R, T>> : AutoCloseable {
     abstract class Type<R : Renderer<R, T>, T : Type<R, T>> {
@@ -16,8 +16,10 @@ interface Renderer<R : Renderer<R, T>, T : Renderer.Type<R, T>> : AutoCloseable 
     val type: T
 
     fun render(
-        colorFrameBuffer: GpuTextureView,
-        depthFrameBuffer: GpuTextureView?,
+        @ExpectType("GpuTextureView")
+        colorFrameBuffer: Any,
+        @ExpectType("GpuTextureView")
+        depthFrameBuffer: Any?,
         task: RenderTask,
         scene: RenderScene,
     )
@@ -49,7 +51,9 @@ interface ScheduledRenderer<R : ScheduledRenderer<R, T>, T : Renderer.Type<R, T>
     fun schedule(task: RenderTask)
 
     fun executeTasks(
-        colorFrameBuffer: GpuTextureView,
-        depthFrameBuffer: GpuTextureView?,
+        @ExpectType("GpuTextureView")
+        colorFrameBuffer: Any,
+        @ExpectType("GpuTextureView")
+        depthFrameBuffer: Any?,
     )
 }

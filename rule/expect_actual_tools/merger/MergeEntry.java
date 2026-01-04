@@ -1,4 +1,4 @@
-package top.fifthlight.mergetools;
+package top.fifthlight.mergetools.merger;
 
 import top.fifthlight.mergetools.processor.ExpectData;
 
