@@ -3,6 +3,12 @@
 #blazerod_extension version(<4.3); GL_ARB_compute_shader: require
 #blazerod_extension version(<4.3); GL_ARB_shading_language_packing: require
 
+#ifdef IRIS_VERTEX_FORMAT
+layout(std430) buffer IrisTriangleIndicesData {
+    uint IrisTriangleIndices[];
+};
+#endif// IRIS_VERTEX_FORMAT
+
 #moj_import <blazerod:joint.glsl>
 #moj_import <blazerod:morph.glsl>
 
@@ -89,6 +95,10 @@ layout(std140) uniform ComputeData {
     uint TotalVerticesCount;
     uint UV1;
     uint UV2;
+    mat4 ModelTangentMatrix;
+    uint IrisEntity0;
+    uint IrisEntity1;
+    uint IrisExpanded;
 };
 
 layout(local_size_x = COMPUTE_LOCAL_SIZE, local_size_y = 1, local_size_z = 1) in;
@@ -99,7 +109,11 @@ void main() {
         return;
     }
 
-    SourceVertex sourceVertex = SourceVertices[vertexId];
+    uint sourceVertexId = vertexId;
+#ifdef IRIS_VERTEX_FORMAT
+    sourceVertexId = IrisTriangleIndices[vertexId];
+#endif// IRIS_VERTEX_FORMAT
+    SourceVertex sourceVertex = SourceVertices[sourceVertexId];
     vec3 finalPosition = sourceVertex.position;
     vec4 finalColor = unpackUnorm4x8(uint(sourceVertex.color));
     #ifdef WITH_NORMAL

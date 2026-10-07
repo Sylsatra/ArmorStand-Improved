@@ -32,6 +32,7 @@ import top.fifthlight.blazerod.runtime.node.component.PrimitiveComponent
 import top.fifthlight.blazerod.runtime.resource.RenderMaterial
 import top.fifthlight.blazerod.runtime.resource.RenderPrimitive
 import top.fifthlight.blazerod.runtime.renderer.util.EntityMaterialPipelines
+import top.fifthlight.blazerod.runtime.renderer.util.IrisVertexAttributes
 import top.fifthlight.blazerod.runtime.uniform.ComputeDataUniformBuffer
 import top.fifthlight.blazerod.runtime.uniform.MorphDataUniformBuffer
 import top.fifthlight.blazerod.runtime.uniform.SkinModelIndicesUniformBuffer
@@ -131,6 +132,7 @@ class ComputeShaderTransformRenderer private constructor() :
         override fun create() = ComputeShaderTransformRenderer()
 
         private val pipelineCache = mutableMapOf<RenderMaterial.Descriptor, Int2ReferenceMap<ComputePipeline>>()
+        private val irisAttributePipelineCache = mutableMapOf<Pair<RenderMaterial.Descriptor, Boolean>, ComputePipeline>()
 
         private fun getPipeline(material: RenderMaterial<*>, irisVertexFormat: Boolean): ComputePipeline {
             val pipelineInfo = PipelineInfo(
@@ -148,6 +150,7 @@ class ComputeShaderTransformRenderer private constructor() :
                     withStorageBuffer("TargetVertexData")
                     if (pipelineInfo.irisVertexFormat) {
                         withShaderDefine("IRIS_VERTEX_FORMAT")
+                        withStorageBuffer("IrisTriangleIndicesData")
                     }
                     if (pipelineInfo.morphed) {
                         withShaderDefine("MORPHED")
@@ -171,6 +174,26 @@ class ComputeShaderTransformRenderer private constructor() :
                 }.build()
             }
         }
+
+        private fun getIrisAttributePipeline(material: RenderMaterial<*>, generateNormals: Boolean): ComputePipeline =
+            irisAttributePipelineCache.getOrPut(material.descriptor to generateNormals) {
+                ComputePipeline.builder().apply {
+                    withLocation(ResourceLocation.fromNamespaceAndPath(
+                        "blazerod",
+                        "vertex_iris_attributes${if (generateNormals) "_generated_normals" else ""}",
+                    ))
+                    withComputeShader(ResourceLocation.fromNamespaceAndPath("blazerod", "compute/iris_vertex_attributes"))
+                    withShaderDefine("SUPPORT_SSBO")
+                    withShaderDefine("COMPUTE_SHADER")
+                    withShaderDefine("IRIS_VERTEX_FORMAT")
+                    if (generateNormals) {
+                        withShaderDefine("GENERATE_NORMALS")
+                    }
+                    withStorageBuffer("TargetVertexData")
+                    withUniform("ComputeData", UniformType.UNIFORM_BUFFER)
+                    withShaderDefine("COMPUTE_LOCAL_SIZE", BlazeRod.COMPUTE_LOCAL_SIZE)
+                }.build()
+            }
     }
 
     override val type: Type
@@ -192,10 +215,26 @@ class ComputeShaderTransformRenderer private constructor() :
         targetVertexFormat: VertexFormat,
         irisVertexFormat: Boolean,
         modelNormalMatrix: Matrix4fc,
-    ): GpuBufferSlice {
+        modelTangentMatrix: Matrix4fc,
+    ): ComputeOutput {
         val device = RenderSystem.getDevice()
         val commandEncoder = device.createCommandEncoder()
         val material = primitive.material
+        val irisTopology = if (irisVertexFormat) {
+            irisTopology(primitive)
+        } else {
+            null
+        }
+        val irisExpanded = irisTopology?.triangleIndices?.isNotEmpty() == true
+        val outputVertices = if (irisExpanded) irisTopology!!.triangleIndices.size else primitive.vertices
+        val outputMode = if (irisExpanded) VertexFormat.Mode.TRIANGLES else primitive.vertexFormatMode
+        val irisSourceIndices = if (irisVertexFormat) {
+            primitive.irisSourceVertexBuffer {
+                IrisVertexAttributes.packSourceVertexIndices(irisTopology!!, primitive.vertices)
+            }
+        } else {
+            null
+        }
         var computePass: ComputePass? = null
         var targetVertexData: GpuBufferSlice
         val computeDataUniformBufferSlice: GpuBufferSlice
@@ -206,12 +245,16 @@ class ComputeShaderTransformRenderer private constructor() :
         var morphTargetIndicesBufferSlice: GpuBufferSlice? = null
 
         try {
-            targetVertexData = vertexDataPool.allocate(targetVertexFormat.vertexSize * primitive.vertices)
+            targetVertexData = vertexDataPool.allocate(targetVertexFormat.vertexSize * outputVertices)
             computeDataUniformBufferSlice = ComputeDataUniformBuffer.write {
                 this.modelNormalMatrix = modelNormalMatrix
-                totalVertices = primitive.vertices.toUInt()
+                totalVertices = outputVertices.toUInt()
                 uv1 = OverlayTexture.NO_OVERLAY.toUInt()
                 uv2 = task.light.toUInt()
+                this.modelTangentMatrix = modelTangentMatrix
+                irisEntity0 = task.irisEntityIds.packed0
+                irisEntity1 = task.irisEntityIds.packed1
+                this.irisExpanded = if (irisExpanded) 1u else 0u
             }
             skinBuffer?.let { skinBuffer ->
                 skinModelIndicesBufferSlice = SkinModelIndicesUniformBuffer.write {
@@ -251,6 +294,7 @@ class ComputeShaderTransformRenderer private constructor() :
                 }
                 setStorageBuffer("SourceVertexData", primitive.gpuVertexBuffer!!.inner.slice())
                 setStorageBuffer("TargetVertexData", targetVertexData)
+                irisSourceIndices?.let { setStorageBuffer("IrisTriangleIndicesData", it) }
                 setUniform("ComputeData", computeDataUniformBufferSlice)
                 skinJointBufferSlice?.let { skinJointBuffer ->
                     if (device.supportSsbo) {
@@ -284,22 +328,54 @@ class ComputeShaderTransformRenderer private constructor() :
                     setStorageBuffer("MorphColorBlock", targets.color.slice!!)
                     setStorageBuffer("MorphTexCoordBlock", targets.texCoord.slice!!)
                 }
-                val totalWorkSize = primitive.vertices ceilDiv BlazeRod.COMPUTE_LOCAL_SIZE
+                val totalWorkSize = outputVertices ceilDiv BlazeRod.COMPUTE_LOCAL_SIZE
                 computePass.dispatch(totalWorkSize, 1, 1)
             }
         } finally {
             computePass?.close()
         }
 
-        return targetVertexData
+        if (irisVertexFormat) {
+            val irisComputeData = ComputeDataUniformBuffer.write {
+                this.modelNormalMatrix = modelNormalMatrix
+                totalVertices = outputVertices.toUInt()
+                uv1 = OverlayTexture.NO_OVERLAY.toUInt()
+                uv2 = task.light.toUInt()
+                this.modelTangentMatrix = modelTangentMatrix
+                irisEntity0 = task.irisEntityIds.packed0
+                irisEntity1 = task.irisEntityIds.packed1
+                this.irisExpanded = if (irisExpanded) 1u else 0u
+            }
+            val attributePipeline = getIrisAttributePipeline(
+                material = material,
+                generateNormals = material.descriptor.id == 0,
+            )
+            val attributeEncoder = device.createCommandEncoder()
+            attributeEncoder.memoryBarrier(CommandEncoderExt.BARRIER_STORAGE_BUFFER_BIT)
+            attributeEncoder.createComputePass { "BlazeRod Iris attribute pass" }.use { pass ->
+                pass.setPipeline(attributePipeline)
+                pass.setStorageBuffer("TargetVertexData", targetVertexData)
+                pass.setUniform("ComputeData", irisComputeData)
+                pass.dispatch(outputVertices ceilDiv BlazeRod.COMPUTE_LOCAL_SIZE, 1, 1)
+            }
+        }
+
+        return ComputeOutput(targetVertexData, outputVertices, outputMode, !irisExpanded && primitive.indexBuffer != null)
     }
+
+    private data class ComputeOutput(
+        val vertexBuffer: GpuBufferSlice,
+        val vertices: Int,
+        val mode: VertexFormat.Mode,
+        val useIndexBuffer: Boolean,
+    )
 
     private class ComputeItem private constructor() {
         private var released = true
         private var _primitiveComponent: PrimitiveComponent? = null
         private var _renderTask: RenderTaskImpl? = null
         private var _vertexFormat: VertexFormat? = null
-        private var _vertexBuffer: GpuBufferSlice? = null
+        private var _computeOutput: ComputeOutput? = null
 
         val primitiveComponent
             get() = _primitiveComponent!!
@@ -307,8 +383,8 @@ class ComputeShaderTransformRenderer private constructor() :
             get() = _renderTask!!
         val vertexFormat
             get() = _vertexFormat!!
-        val vertexBuffer
-            get() = _vertexBuffer!!
+        val computeOutput
+            get() = _computeOutput!!
 
         fun release() {
             if (released) {
@@ -329,7 +405,7 @@ class ComputeShaderTransformRenderer private constructor() :
                     _primitiveComponent = null
                     _renderTask = null
                     _vertexFormat = null
-                    _vertexBuffer = null
+                    _computeOutput = null
                 },
                 onClosed = {},
             )
@@ -338,38 +414,56 @@ class ComputeShaderTransformRenderer private constructor() :
                 primitiveComponent: PrimitiveComponent,
                 renderTask: RenderTaskImpl,
                 vertexFormat: VertexFormat,
-                vertexBuffer: GpuBufferSlice,
+                computeOutput: ComputeOutput,
             ) = POOL.acquire().apply {
                 _primitiveComponent = primitiveComponent
                 _renderTask = renderTask
                 _vertexFormat = vertexFormat
-                _vertexBuffer = vertexBuffer
+                _computeOutput = computeOutput
             }
         }
     }
 
     private val modelMatrix = Matrix4f()
     private val modelNormalMatrix = Matrix4f()
+    private val modelTangentMatrix = Matrix4f()
     private val renderTasks = mutableListOf<RenderTaskImpl>()
     private val computeItems = mutableListOf<ComputeItem>()
-    private val irisTasks = TaskMap()
-    private val irisRendererDelegate = lazy { CpuTransformRenderer.create() }
+    private val fallbackTasks = TaskMap()
+    private val irisTopologies = WeakHashMap<RenderPrimitive, IrisVertexAttributes.Topology>()
+    private val cpuRendererDelegate = lazy { CpuTransformRenderer.create() }
+
+    private fun irisTopology(primitive: RenderPrimitive) = irisTopologies.getOrPut(primitive) {
+        IrisVertexAttributes.buildTopology(
+            primitive.vertices,
+            primitive.vertexFormatMode,
+            primitive.indexBuffer?.cpuIndices,
+        )
+    }
+
+    private fun supportsIrisCompute(primitive: RenderPrimitive): Boolean {
+        if (!primitive.supportsIrisCompute) {
+            return false
+        }
+        val requiredStorageBindings = 3 +
+            (if (primitive.material.morphed) 5 else 0) +
+            (if (primitive.material.skinned) 1 else 0)
+        return requiredStorageBindings <= RenderSystem.getDevice().maxSsboBindings
+    }
 
     override fun schedule(task: RenderTask) {
         val task = task as RenderTaskImpl
-        if (IrisApis.shaderPackInUse) {
-            irisTasks.addTask(task)
-            return
-        }
         val instance = task.instance
         val scene = instance.scene
+        if (scene.primitiveComponents.any {
+                !it.primitive.gpuComplete || (IrisApis.shaderPackInUse && !supportsIrisCompute(it.primitive))
+            }) {
+            fallbackTasks.addTask(task)
+            return
+        }
         renderTasks.add(task)
         for (primitiveComponent in scene.primitiveComponents) {
             val primitive = primitiveComponent.primitive
-
-            if (!primitive.gpuComplete) {
-                return
-            }
 
             task.localMatricesBuffer.content.getPositionMatrix(
                 primitiveComponent.primitiveIndex,
@@ -377,6 +471,7 @@ class ComputeShaderTransformRenderer private constructor() :
             )
             modelMatrix.mulLocal(task.modelMatrix)
             modelMatrix.normal(modelNormalMatrix)
+            modelTangentMatrix.set(modelMatrix)
 
             val irisVertexFormat = IrisApis.shaderPackInUse
             val targetVertexFormat = if (irisVertexFormat) {
@@ -384,7 +479,7 @@ class ComputeShaderTransformRenderer private constructor() :
             } else {
                 BlazerodVertexFormats.ENTITY_PADDED
             }
-            val vertexBuffer = dispatchCompute(
+            val computeOutput = dispatchCompute(
                 primitive = primitive,
                 task = task,
                 skinBuffer = primitiveComponent.skinIndex?.let { task.skinBuffer[it] }?.content,
@@ -392,13 +487,14 @@ class ComputeShaderTransformRenderer private constructor() :
                 targetVertexFormat = targetVertexFormat,
                 irisVertexFormat = irisVertexFormat,
                 modelNormalMatrix = modelNormalMatrix,
+                modelTangentMatrix = modelTangentMatrix,
             )
 
             val item = ComputeItem.acquire(
                 primitiveComponent = primitiveComponent,
                 renderTask = task,
                 vertexFormat = targetVertexFormat,
-                vertexBuffer = vertexBuffer,
+                computeOutput = computeOutput,
             )
 
             computeItems.add(item)
@@ -410,9 +506,9 @@ class ComputeShaderTransformRenderer private constructor() :
         colorFrameBuffer: GpuTextureView,
         depthFrameBuffer: GpuTextureView?,
     ) {
-        irisTasks.executeTasks { scene, tasks ->
+        fallbackTasks.executeTasks { scene, tasks ->
             for (task in tasks) {
-                irisRendererDelegate.value.render(colorFrameBuffer, depthFrameBuffer, task, scene)
+                cpuRendererDelegate.value.render(colorFrameBuffer, depthFrameBuffer, task, scene)
             }
         }
         if (computeItems.isEmpty()) {
@@ -470,13 +566,13 @@ class ComputeShaderTransformRenderer private constructor() :
                         EntityMaterialPipelines.bindBaseColor(this, material)
 
                         setVertexFormat(item.vertexFormat)
-                        setVertexFormatMode(primitive.vertexFormatMode)
-                        setVertexBuffer(0, item.vertexBuffer.buffer())
-                        primitive.indexBuffer?.let { indices ->
+                        setVertexFormatMode(item.computeOutput.mode)
+                        setVertexBuffer(0, item.computeOutput.vertexBuffer.buffer())
+                        primitive.indexBuffer?.takeIf { item.computeOutput.useIndexBuffer }?.let { indices ->
                             setIndexBuffer(indices)
                             drawIndexed(0, 0, indices.length, 1)
                         } ?: run {
-                            draw(0, primitive.vertices)
+                            draw(0, item.computeOutput.vertices)
                         }
                     }
                 }
@@ -498,11 +594,8 @@ class ComputeShaderTransformRenderer private constructor() :
         skinBuffer: RenderSkinBuffer?,
         targetBuffer: MorphTargetBuffer?,
     ) {
-        if (IrisApis.shaderPackInUse) {
-            irisRendererDelegate.value.render(colorFrameBuffer, depthFrameBuffer, scene, primitive, primitiveIndex, task, skinBuffer, targetBuffer)
-            return
-        }
-        if (!primitive.gpuComplete) {
+        if (!primitive.gpuComplete || (IrisApis.shaderPackInUse && !supportsIrisCompute(primitive))) {
+            cpuRendererDelegate.value.render(colorFrameBuffer, depthFrameBuffer, scene, primitive, primitiveIndex, task, skinBuffer, targetBuffer)
             return
         }
 
@@ -513,6 +606,7 @@ class ComputeShaderTransformRenderer private constructor() :
         task.localMatricesBuffer.content.getPositionMatrix(primitiveIndex, modelMatrix)
         modelMatrix.mulLocal(task.modelMatrix)
         modelMatrix.normal(modelNormalMatrix)
+        modelTangentMatrix.set(modelMatrix)
         modelMatrix.mulLocal(RenderSystem.getModelViewStack())
 
         val irisVertexFormat = IrisApis.shaderPackInUse
@@ -521,7 +615,7 @@ class ComputeShaderTransformRenderer private constructor() :
         } else {
             BlazerodVertexFormats.ENTITY_PADDED
         }
-        val vertexBuffer = dispatchCompute(
+        val computeOutput = dispatchCompute(
             primitive = primitive,
             task = task,
             skinBuffer = skinBuffer,
@@ -529,6 +623,7 @@ class ComputeShaderTransformRenderer private constructor() :
             targetVertexFormat = targetVertexFormat,
             irisVertexFormat = irisVertexFormat,
             modelNormalMatrix = modelNormalMatrix,
+            modelTangentMatrix = modelTangentMatrix,
         )
 
         commandEncoder.memoryBarrier(CommandEncoderExt.BARRIER_STORAGE_BUFFER_BIT or CommandEncoderExt.BARRIER_VERTEX_BUFFER_BIT)
@@ -557,22 +652,22 @@ class ComputeShaderTransformRenderer private constructor() :
                 EntityMaterialPipelines.bindBaseColor(this, material)
 
                 setVertexFormat(targetVertexFormat)
-                setVertexFormatMode(primitive.vertexFormatMode)
-                setVertexBuffer(0, vertexBuffer.buffer())
-                primitive.indexBuffer?.let { indices ->
+                setVertexFormatMode(computeOutput.mode)
+                setVertexBuffer(0, computeOutput.vertexBuffer.buffer())
+                primitive.indexBuffer?.takeIf { computeOutput.useIndexBuffer }?.let { indices ->
                     setIndexBuffer(indices)
                     drawIndexed(0, 0, indices.length, 1)
                 } ?: run {
-                    draw(0, primitive.vertices)
+                    draw(0, computeOutput.vertices)
                 }
             }
         }
     }
 
     override fun rotate() {
-        irisTasks.discardTasks()
-        if (irisRendererDelegate.isInitialized()) {
-            irisRendererDelegate.value.rotate()
+        fallbackTasks.discardTasks()
+        if (cpuRendererDelegate.isInitialized()) {
+            cpuRendererDelegate.value.rotate()
         }
         computeItems.forEach { it.release() }
         computeItems.clear()
@@ -583,10 +678,11 @@ class ComputeShaderTransformRenderer private constructor() :
     }
 
     override fun close() {
-        irisTasks.close()
-        if (irisRendererDelegate.isInitialized()) {
-            irisRendererDelegate.value.close()
+        fallbackTasks.close()
+        if (cpuRendererDelegate.isInitialized()) {
+            cpuRendererDelegate.value.close()
         }
+        irisTopologies.clear()
         computeItems.forEach { it.release() }
         computeItems.clear()
         renderTasks.forEach { it.release() }

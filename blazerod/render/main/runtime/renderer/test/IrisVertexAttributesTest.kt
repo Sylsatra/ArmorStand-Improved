@@ -98,6 +98,17 @@ class IrisVertexAttributesTest {
     }
 
     @Test
+    fun gpuSourceVertexMappingExpandsTrianglesAndKeepsNonTriangleVertices() {
+        val topology = topology(4, intArrayOf(3, 1, 2))
+        val expanded = IrisVertexAttributes.packSourceVertexIndices(topology, 4).order(ByteOrder.nativeOrder())
+        assertArrayEquals(intArrayOf(3, 1, 2), IntArray(3) { expanded.getInt(it * Int.SIZE_BYTES) })
+
+        val emptyTopology = topology(3, intArrayOf(2, 2, 1))
+        val identity = IrisVertexAttributes.packSourceVertexIndices(emptyTopology, 3).order(ByteOrder.nativeOrder())
+        assertArrayEquals(intArrayOf(0, 1, 2), IntArray(3) { identity.getInt(it * Int.SIZE_BYTES) })
+    }
+
+    @Test
     fun mirroredUvsPreserveIrisHandedness() {
         val buffer = vertices(
             floatArrayOf(0f, 0f, 0f, 0f, 0f),

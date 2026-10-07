@@ -16,5 +16,9 @@ object ComputeDataUniformBuffer : UniformBuffer<ComputeDataUniformBuffer, Comput
         var totalVertices by uint()
         var uv1 by uint()
         var uv2 by uint()
+        var modelTangentMatrix by mat4()
+        var irisEntity0 by uint()
+        var irisEntity1 by uint()
+        var irisExpanded by uint()
     }
 }

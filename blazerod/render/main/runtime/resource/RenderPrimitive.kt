@@ -1,9 +1,12 @@
 package top.fifthlight.blazerod.runtime.resource
 
 import com.mojang.blaze3d.buffers.GpuBuffer
+import com.mojang.blaze3d.buffers.GpuBufferSlice
+import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.vertex.VertexFormat
 import top.fifthlight.blazerod.api.refcount.AbstractRefCount
 import top.fifthlight.blazerod.extension.GpuBufferExt
+import top.fifthlight.blazerod.extension.createBuffer
 import top.fifthlight.blazerod.extension.extraUsage
 import top.fifthlight.blazerod.render.GpuIndexBuffer
 import top.fifthlight.blazerod.render.RefCountedGpuBuffer
@@ -20,6 +23,8 @@ class RenderPrimitive @JvmOverloads constructor(
     val targetGroups: List<MorphTargetGroup>,
     val vertexNormals: FloatArray? = null,
 ) : AbstractRefCount() {
+    private var irisSourceVertexBuffer: GpuBuffer? = null
+
     override val typeId: String
         get() = "primitive"
 
@@ -36,6 +41,22 @@ class RenderPrimitive @JvmOverloads constructor(
 
     val gpuComplete = gpuVertexBuffer != null && targets?.gpuComplete != false
     val cpuComplete = cpuVertexBuffer != null && targets?.cpuComplete != false
+
+    val supportsIrisCompute: Boolean
+        get() = gpuComplete && vertexNormals == null && (indexBuffer == null || indexBuffer.cpuIndices != null)
+
+    fun irisSourceVertexBuffer(createData: () -> ByteBuffer): GpuBufferSlice {
+        check(supportsIrisCompute) { "Primitive cannot provide GPU Iris vertex mapping" }
+        val buffer = irisSourceVertexBuffer ?: run {
+            RenderSystem.getDevice().createBuffer(
+                null,
+                0,
+                GpuBufferExt.EXTRA_USAGE_STORAGE_BUFFER,
+                createData(),
+            ).also { irisSourceVertexBuffer = it }
+        }
+        return buffer.slice()
+    }
 
     class Target(
         val gpuBuffer: GpuBuffer?,
@@ -69,6 +90,8 @@ class RenderPrimitive @JvmOverloads constructor(
     }
 
     override fun onClosed() {
+        irisSourceVertexBuffer?.close()
+        irisSourceVertexBuffer = null
         gpuVertexBuffer?.decreaseReferenceCount()
         indexBuffer?.decreaseReferenceCount()
         material.decreaseReferenceCount()

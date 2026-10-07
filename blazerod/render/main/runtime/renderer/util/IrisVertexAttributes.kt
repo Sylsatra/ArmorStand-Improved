@@ -7,6 +7,7 @@ import org.joml.Vector3f
 import top.fifthlight.blazerod.render.IrisApis
 import top.fifthlight.blazerod.render.IrisEntityIds
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -26,6 +27,15 @@ object IrisVertexAttributes {
         val midUv: Int,
         val tangent: Int,
     )
+
+    fun packSourceVertexIndices(topology: Topology, vertexCount: Int): ByteBuffer {
+        val sourceIndices = topology.triangleIndices.takeIf { it.isNotEmpty() } ?: IntArray(vertexCount) { it }
+        val buffer = ByteBuffer.allocateDirect(sourceIndices.size * Int.SIZE_BYTES)
+            .order(ByteOrder.nativeOrder())
+        sourceIndices.forEach { buffer.putInt(it) }
+        buffer.flip()
+        return buffer
+    }
 
     fun buildTopology(vertexCount: Int, mode: VertexFormat.Mode, indices: IntArray?): Topology {
         require(vertexCount >= 0)
