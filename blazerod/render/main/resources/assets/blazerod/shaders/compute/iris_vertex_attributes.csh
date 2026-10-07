@@ -47,11 +47,11 @@ bool finiteVec3(vec3 value) {
 }
 
 uint packTangent(vec3 tangent, float handedness) {
-    ivec4 packed = ivec4(clamp(vec4(tangent, handedness), -1.0, 1.0) * 127.0);
-    return (uint(packed.x) & 255u)
-        | ((uint(packed.y) & 255u) << 8u)
-        | ((uint(packed.z) & 255u) << 16u)
-        | ((uint(packed.w) & 255u) << 24u);
+    ivec4 tangentBytes = ivec4(clamp(vec4(tangent, handedness), -1.0, 1.0) * 127.0);
+    return (uint(tangentBytes.x) & 255u)
+        | ((uint(tangentBytes.y) & 255u) << 8u)
+        | ((uint(tangentBytes.z) & 255u) << 16u)
+        | ((uint(tangentBytes.w) & 255u) << 24u);
 }
 
 void main() {
