@@ -1,0 +1,17 @@
+load("//rule:junit_test.bzl", "kt_junit_test")
+
+kt_junit_test(
+    name = "accessor_test",
+    srcs = ["AccessorTest.kt"],
+    test_class = "top.fifthlight.blazerod.model.test.AccessorTest",
+    deps = [
+        "//blazerod/model/model-base",
+        "@maven//:org_jetbrains_kotlin_kotlin_test",
+    ],
+)
+
+test_suite(
+    name = "test",
+    tests = [":accessor_test"],
+    visibility = ["//visibility:public"],
+)

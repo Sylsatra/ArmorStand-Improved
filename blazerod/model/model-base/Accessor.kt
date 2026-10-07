@@ -65,12 +65,12 @@ val Accessor.elementLength
 
 fun Accessor.readByteBuffer(): ByteBuffer {
     if (bufferView == null) {
-        return ByteBuffer.allocateDirect(totalByteLength)
+        return ByteBuffer.allocateDirect(totalByteLength).order(ByteOrder.LITTLE_ENDIAN)
     }
     require(bufferView.byteStride == 0) { "Can't read byte buffer from a non-zero-byte-stride accessor" }
     val offset = bufferView.byteOffset + byteOffset
     val length = count * componentType.byteLength * type.components
-    return bufferView.buffer.buffer.slice(offset, length)
+    return bufferView.buffer.buffer.slice(offset, length).order(ByteOrder.LITTLE_ENDIAN)
 }
 
 inline fun Accessor.read(crossinline func: (ByteBuffer) -> Unit) {
