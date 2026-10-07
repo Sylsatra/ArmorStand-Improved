@@ -23,4 +23,7 @@ kt_junit_test(
         "@maven//:org_jetbrains_kotlin_kotlin_test",
         "@maven//:org_joml_joml",
     ],
+    runtime_deps = [
+        "//game/1.21.8:game_client_named",
+    ],
 )
