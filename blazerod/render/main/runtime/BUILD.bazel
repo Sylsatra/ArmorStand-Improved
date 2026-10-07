@@ -22,6 +22,7 @@ kt_merge_library(
     visibility = ["//blazerod/render:__subpackages__"],
     deps = [
         "//blazerod/model/model-base",
+        "//blazerod/render/expect",
         "//blazerod/render/game:remapped_client_access_widened_named",
         "@maven//:it_unimi_dsi_fastutil",
         "@maven//:org_joml_joml",
