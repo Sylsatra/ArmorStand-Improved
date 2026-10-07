@@ -228,7 +228,7 @@ class ComputeShaderTransformRenderer private constructor() :
         supportSlicing = false,
     )
 
-    private fun dispatchCompute(
+    private fun prepareCompute(
         primitive: RenderPrimitive,
         task: RenderTaskImpl,
         skinBuffer: RenderSkinBuffer?,
@@ -238,8 +238,6 @@ class ComputeShaderTransformRenderer private constructor() :
         modelNormalMatrix: Matrix4fc,
         modelTangentMatrix: Matrix4fc,
     ): ComputeOutput {
-        val device = RenderSystem.getDevice()
-        val commandEncoder = device.createCommandEncoder()
         val material = primitive.material
         val irisTopology = if (irisVertexFormat) {
             irisTopology(primitive)
@@ -264,8 +262,7 @@ class ComputeShaderTransformRenderer private constructor() :
         } else {
             null
         }
-        var computePass: ComputePass? = null
-        var targetVertexData: GpuBufferSlice
+        val targetVertexData: GpuBufferSlice
         val computeDataUniformBufferSlice: GpuBufferSlice
         var skinModelIndicesBufferSlice: GpuBufferSlice? = null
         var skinJointBufferSlice: GpuBufferSlice? = null
@@ -273,125 +270,69 @@ class ComputeShaderTransformRenderer private constructor() :
         var morphWeightsBufferSlice: GpuBufferSlice? = null
         var morphTargetIndicesBufferSlice: GpuBufferSlice? = null
 
-        try {
-            targetVertexData = vertexDataPool.allocate(targetVertexFormat.vertexSize * outputVertices)
-            computeDataUniformBufferSlice = ComputeDataUniformBuffer.write {
-                this.modelNormalMatrix = modelNormalMatrix
-                totalVertices = outputVertices.toUInt()
-                uv1 = OverlayTexture.NO_OVERLAY.toUInt()
-                uv2 = task.light.toUInt()
-                this.modelTangentMatrix = modelTangentMatrix
-                irisEntity0 = task.irisEntityIds.packed0
-                irisEntity1 = task.irisEntityIds.packed1
-                this.irisExpanded = if (irisExpanded) 1u else 0u
+        targetVertexData = vertexDataPool.allocate(targetVertexFormat.vertexSize * outputVertices)
+        computeDataUniformBufferSlice = ComputeDataUniformBuffer.write {
+            this.modelNormalMatrix = modelNormalMatrix
+            totalVertices = outputVertices.toUInt()
+            uv1 = OverlayTexture.NO_OVERLAY.toUInt()
+            uv2 = task.light.toUInt()
+            this.modelTangentMatrix = modelTangentMatrix
+            irisEntity0 = task.irisEntityIds.packed0
+            irisEntity1 = task.irisEntityIds.packed1
+            this.irisExpanded = if (irisExpanded) 1u else 0u
+        }
+        skinBuffer?.let { skinBuffer ->
+            skinModelIndicesBufferSlice = SkinModelIndicesUniformBuffer.write {
+                skinJoints = skinBuffer.jointSize
             }
-            skinBuffer?.let { skinBuffer ->
-                skinModelIndicesBufferSlice = SkinModelIndicesUniformBuffer.write {
-                    skinJoints = skinBuffer.jointSize
+            skinJointBufferSlice = dataPool.upload(skinBuffer.buffer)
+        }
+        targetBuffer?.let { targetBuffer ->
+            primitive.targets?.let { targets ->
+                morphDataUniformBufferSlice = MorphDataUniformBuffer.write {
+                    totalVertices = primitive.vertices
+                    posTargets = targets.position.targetsCount
+                    colorTargets = targets.color.targetsCount
+                    texCoordTargets = targets.texCoord.targetsCount
+                    totalTargets =
+                        targets.position.targetsCount + targets.color.targetsCount + targets.texCoord.targetsCount
                 }
-                skinJointBufferSlice = dataPool.upload(skinBuffer.buffer)
             }
-            targetBuffer?.let { targetBuffer ->
-                primitive.targets?.let { targets ->
-                    morphDataUniformBufferSlice = MorphDataUniformBuffer.write {
-                        totalVertices = primitive.vertices
-                        posTargets = targets.position.targetsCount
-                        colorTargets = targets.color.targetsCount
-                        texCoordTargets = targets.texCoord.targetsCount
-                        totalTargets =
-                            targets.position.targetsCount + targets.color.targetsCount + targets.texCoord.targetsCount
-                    }
-                }
-                morphWeightsBufferSlice = dataPool.upload(targetBuffer.weightsBuffer)
-                morphTargetIndicesBufferSlice = dataPool.upload(targetBuffer.indicesBuffer)
-            }
-
-            val pipeline = getPipeline(
-                material = material,
-                irisVertexFormat = irisVertexFormat,
-                irisSourceNormals = irisSourceNormals != null,
-            )
-
-            computePass = commandEncoder.createComputePass { "BlazeRod compute pass" }
-
-            with(computePass) {
-                setPipeline(pipeline)
-
-                if (GlRenderPass.VALIDATION) {
-                    require(material.skinned == (skinBuffer != null)) {
-                        "Primitive's skin data ${skinBuffer != null} and material skinned ${material.skinned} not matching"
-                    }
-                }
-                setStorageBuffer("SourceVertexData", primitive.gpuVertexBuffer!!.inner.slice())
-                setStorageBuffer("TargetVertexData", targetVertexData)
-                irisSourceIndices?.let { setStorageBuffer("IrisTriangleIndicesData", it) }
-                irisSourceNormals?.let { setStorageBuffer("IrisSourceNormalsData", it) }
-                setUniform("ComputeData", computeDataUniformBufferSlice)
-                skinJointBufferSlice?.let { skinJointBuffer ->
-                    if (device.supportSsbo) {
-                        setStorageBuffer("JointsData", skinJointBuffer)
-                    } else {
-                        setUniform("Joints", skinJointBuffer)
-                    }
-                }
-                skinModelIndicesBufferSlice?.let { skinModelIndices ->
-                    setUniform("SkinModelIndices", skinModelIndices)
-                }
-                morphDataUniformBufferSlice?.let { morphDataUniformBuffer ->
-                    setUniform("MorphData", morphDataUniformBuffer)
-                }
-                morphWeightsBufferSlice?.let { morphWeightsBuffer ->
-                    if (device.supportSsbo) {
-                        setStorageBuffer("MorphWeightsData", morphWeightsBuffer)
-                    } else {
-                        setUniform("MorphWeights", morphWeightsBuffer)
-                    }
-                }
-                morphTargetIndicesBufferSlice?.let { morphTargetIndicesBuffer ->
-                    if (device.supportSsbo) {
-                        setStorageBuffer("MorphTargetIndicesData", morphTargetIndicesBuffer)
-                    } else {
-                        setUniform("MorphTargetIndices", morphTargetIndicesBuffer)
-                    }
-                }
-                primitive.targets?.let { targets ->
-                    setStorageBuffer("MorphPositionBlock", targets.position.slice!!)
-                    setStorageBuffer("MorphColorBlock", targets.color.slice!!)
-                    setStorageBuffer("MorphTexCoordBlock", targets.texCoord.slice!!)
-                }
-                val totalWorkSize = outputVertices ceilDiv BlazeRod.COMPUTE_LOCAL_SIZE
-                computePass.dispatch(totalWorkSize, 1, 1)
-            }
-        } finally {
-            computePass?.close()
+            morphWeightsBufferSlice = dataPool.upload(targetBuffer.weightsBuffer)
+            morphTargetIndicesBufferSlice = dataPool.upload(targetBuffer.indicesBuffer)
         }
 
-        if (irisVertexFormat) {
-            val irisComputeData = ComputeDataUniformBuffer.write {
-                this.modelNormalMatrix = modelNormalMatrix
-                totalVertices = outputVertices.toUInt()
-                uv1 = OverlayTexture.NO_OVERLAY.toUInt()
-                uv2 = task.light.toUInt()
-                this.modelTangentMatrix = modelTangentMatrix
-                irisEntity0 = task.irisEntityIds.packed0
-                irisEntity1 = task.irisEntityIds.packed1
-                this.irisExpanded = if (irisExpanded) 1u else 0u
-            }
-            val attributePipeline = getIrisAttributePipeline(
+        val pipeline = getPipeline(
+            material = material,
+            irisVertexFormat = irisVertexFormat,
+            irisSourceNormals = irisSourceNormals != null,
+        )
+        val attributePipeline = if (irisVertexFormat) {
+            getIrisAttributePipeline(
                 material = material,
                 generateNormals = material.descriptor.id == 0 && primitive.vertexNormals == null,
             )
-            val attributeEncoder = device.createCommandEncoder()
-            attributeEncoder.memoryBarrier(CommandEncoderExt.BARRIER_STORAGE_BUFFER_BIT)
-            attributeEncoder.createComputePass { "BlazeRod Iris attribute pass" }.use { pass ->
-                pass.setPipeline(attributePipeline)
-                pass.setStorageBuffer("TargetVertexData", targetVertexData)
-                pass.setUniform("ComputeData", irisComputeData)
-                pass.dispatch(outputVertices ceilDiv BlazeRod.COMPUTE_LOCAL_SIZE, 1, 1)
-            }
+        } else {
+            null
         }
 
-        return ComputeOutput(targetVertexData, outputVertices, outputMode, !irisExpanded && primitive.indexBuffer != null)
+        return ComputeOutput(
+            vertexBuffer = targetVertexData,
+            vertices = outputVertices,
+            mode = outputMode,
+            useIndexBuffer = !irisExpanded && primitive.indexBuffer != null,
+            primitive = primitive,
+            pipeline = pipeline,
+            computeData = computeDataUniformBufferSlice,
+            irisSourceIndices = irisSourceIndices,
+            irisSourceNormals = irisSourceNormals,
+            skinModelIndices = skinModelIndicesBufferSlice,
+            skinJoints = skinJointBufferSlice,
+            morphData = morphDataUniformBufferSlice,
+            morphWeights = morphWeightsBufferSlice,
+            morphTargetIndices = morphTargetIndicesBufferSlice,
+            irisAttributePipeline = attributePipeline,
+        )
     }
 
     private data class ComputeOutput(
@@ -399,7 +340,73 @@ class ComputeShaderTransformRenderer private constructor() :
         val vertices: Int,
         val mode: VertexFormat.Mode,
         val useIndexBuffer: Boolean,
+        val primitive: RenderPrimitive,
+        val pipeline: ComputePipeline,
+        val computeData: GpuBufferSlice,
+        val irisSourceIndices: GpuBufferSlice?,
+        val irisSourceNormals: GpuBufferSlice?,
+        val skinModelIndices: GpuBufferSlice?,
+        val skinJoints: GpuBufferSlice?,
+        val morphData: GpuBufferSlice?,
+        val morphWeights: GpuBufferSlice?,
+        val morphTargetIndices: GpuBufferSlice?,
+        val irisAttributePipeline: ComputePipeline?,
     )
+
+    private fun dispatchCompute(output: ComputeOutput, pass: ComputePass) {
+        val primitive = output.primitive
+        val material = primitive.material
+        val device = RenderSystem.getDevice()
+        pass.setPipeline(output.pipeline)
+
+        if (GlRenderPass.VALIDATION) {
+            require(material.skinned == (output.skinJoints != null)) {
+                "Primitive's skin data ${output.skinJoints != null} and material skinned ${material.skinned} not matching"
+            }
+        }
+        pass.setStorageBuffer("SourceVertexData", primitive.gpuVertexBuffer!!.inner.slice())
+        pass.setStorageBuffer("TargetVertexData", output.vertexBuffer)
+        output.irisSourceIndices?.let { pass.setStorageBuffer("IrisTriangleIndicesData", it) }
+        output.irisSourceNormals?.let { pass.setStorageBuffer("IrisSourceNormalsData", it) }
+        pass.setUniform("ComputeData", output.computeData)
+        output.skinJoints?.let { skinJointBuffer ->
+            if (device.supportSsbo) {
+                pass.setStorageBuffer("JointsData", skinJointBuffer)
+            } else {
+                pass.setUniform("Joints", skinJointBuffer)
+            }
+        }
+        output.skinModelIndices?.let { pass.setUniform("SkinModelIndices", it) }
+        output.morphData?.let { pass.setUniform("MorphData", it) }
+        output.morphWeights?.let { morphWeightsBuffer ->
+            if (device.supportSsbo) {
+                pass.setStorageBuffer("MorphWeightsData", morphWeightsBuffer)
+            } else {
+                pass.setUniform("MorphWeights", morphWeightsBuffer)
+            }
+        }
+        output.morphTargetIndices?.let { morphTargetIndicesBuffer ->
+            if (device.supportSsbo) {
+                pass.setStorageBuffer("MorphTargetIndicesData", morphTargetIndicesBuffer)
+            } else {
+                pass.setUniform("MorphTargetIndices", morphTargetIndicesBuffer)
+            }
+        }
+        primitive.targets?.let { targets ->
+            pass.setStorageBuffer("MorphPositionBlock", targets.position.slice!!)
+            pass.setStorageBuffer("MorphColorBlock", targets.color.slice!!)
+            pass.setStorageBuffer("MorphTexCoordBlock", targets.texCoord.slice!!)
+        }
+        pass.dispatch(output.vertices ceilDiv BlazeRod.COMPUTE_LOCAL_SIZE, 1, 1)
+    }
+
+    private fun dispatchIrisAttributes(output: ComputeOutput, pass: ComputePass) {
+        val pipeline = output.irisAttributePipeline ?: return
+        pass.setPipeline(pipeline)
+        pass.setStorageBuffer("TargetVertexData", output.vertexBuffer)
+        pass.setUniform("ComputeData", output.computeData)
+        pass.dispatch(output.vertices ceilDiv BlazeRod.COMPUTE_LOCAL_SIZE, 1, 1)
+    }
 
     private class ComputeItem private constructor() {
         private var released = true
@@ -494,6 +501,7 @@ class ComputeShaderTransformRenderer private constructor() :
             return
         }
         renderTasks.add(task)
+        val preparedItems = ArrayList<ComputeItem>(scene.primitiveComponents.size)
         for (primitiveComponent in scene.primitiveComponents) {
             val primitive = primitiveComponent.primitive
 
@@ -511,7 +519,7 @@ class ComputeShaderTransformRenderer private constructor() :
             } else {
                 BlazerodVertexFormats.ENTITY_PADDED
             }
-            val computeOutput = dispatchCompute(
+            val computeOutput = prepareCompute(
                 primitive = primitive,
                 task = task,
                 skinBuffer = primitiveComponent.skinIndex?.let { task.skinBuffer[it] }?.content,
@@ -529,7 +537,26 @@ class ComputeShaderTransformRenderer private constructor() :
                 computeOutput = computeOutput,
             )
 
+            preparedItems.add(item)
             computeItems.add(item)
+        }
+
+        if (preparedItems.isNotEmpty()) {
+            val commandEncoder = RenderSystem.getDevice().createCommandEncoder()
+            commandEncoder.createComputePass { "BlazeRod transform batch" }.use { pass ->
+                for (item in preparedItems) {
+                    dispatchCompute(item.computeOutput, pass)
+                }
+            }
+
+            if (IrisApis.shaderPackInUse) {
+                commandEncoder.memoryBarrier(CommandEncoderExt.BARRIER_STORAGE_BUFFER_BIT)
+                commandEncoder.createComputePass { "BlazeRod Iris attribute batch" }.use { pass ->
+                    for (item in preparedItems) {
+                        dispatchIrisAttributes(item.computeOutput, pass)
+                    }
+                }
+            }
         }
     }
 
@@ -552,38 +579,44 @@ class ComputeShaderTransformRenderer private constructor() :
         commandEncoder.memoryBarrier(CommandEncoderExt.BARRIER_STORAGE_BUFFER_BIT or CommandEncoderExt.BARRIER_VERTEX_BUFFER_BIT)
 
         for (stage in 0..2) {
-            for (item in computeItems) {
-                val task = item.renderTask
-                val primitiveComponent = item.primitiveComponent
-                val primitive = primitiveComponent.primitive
-                val material = primitive.material
-                if (EntityMaterialPipelines.stageOrder(material) != stage) {
-                    continue
-                }
+            if (computeItems.none {
+                    EntityMaterialPipelines.stageOrder(it.primitiveComponent.primitive.material) == stage
+                }) {
+                continue
+            }
 
-                task.localMatricesBuffer.content.getPositionMatrix(
-                    primitiveComponent.primitiveIndex,
-                    modelMatrix,
-                )
-                modelMatrix.mulLocal(task.modelMatrix)
-                modelMatrix.mulLocal(RenderSystem.getModelViewStack())
+            commandEncoder.createRenderPass(
+                { "BlazeRod render stage $stage" },
+                colorFrameBuffer,
+                OptionalInt.empty(),
+                depthFrameBuffer,
+                OptionalDouble.empty()
+            ).use { renderPass ->
+                for (item in computeItems) {
+                    val task = item.renderTask
+                    val primitiveComponent = item.primitiveComponent
+                    val primitive = primitiveComponent.primitive
+                    val material = primitive.material
+                    if (EntityMaterialPipelines.stageOrder(material) != stage) {
+                        continue
+                    }
 
-                val dynamicUniforms = RenderSystem.getDynamicUniforms().writeTransform(
-                    modelMatrix,
-                    material.baseColor.toVector4f(baseColor),
-                    RenderSystem.getModelOffset(),
-                    RenderSystem.getTextureMatrix(),
-                    RenderSystem.getShaderLineWidth()
-                )
+                    task.localMatricesBuffer.content.getPositionMatrix(
+                        primitiveComponent.primitiveIndex,
+                        modelMatrix,
+                    )
+                    modelMatrix.mulLocal(task.modelMatrix)
+                    modelMatrix.mulLocal(RenderSystem.getModelViewStack())
 
-                commandEncoder.createRenderPass(
-                    { "BlazeRod render pass" },
-                    colorFrameBuffer,
-                    OptionalInt.empty(),
-                    depthFrameBuffer,
-                    OptionalDouble.empty()
-                ).use {
-                    with(it) {
+                    val dynamicUniforms = RenderSystem.getDynamicUniforms().writeTransform(
+                        modelMatrix,
+                        material.baseColor.toVector4f(baseColor),
+                        RenderSystem.getModelOffset(),
+                        RenderSystem.getTextureMatrix(),
+                        RenderSystem.getShaderLineWidth()
+                    )
+
+                    with(renderPass) {
                         setPipeline(EntityMaterialPipelines.pipeline(material))
                         RenderSystem.bindDefaultUniforms(this)
                         setUniform("DynamicTransforms", dynamicUniforms)
@@ -632,7 +665,6 @@ class ComputeShaderTransformRenderer private constructor() :
         }
 
         val device = RenderSystem.getDevice()
-        val commandEncoder = device.createCommandEncoder()
         val material = primitive.material
 
         task.localMatricesBuffer.content.getPositionMatrix(primitiveIndex, modelMatrix)
@@ -647,7 +679,7 @@ class ComputeShaderTransformRenderer private constructor() :
         } else {
             BlazerodVertexFormats.ENTITY_PADDED
         }
-        val computeOutput = dispatchCompute(
+        val computeOutput = prepareCompute(
             primitive = primitive,
             task = task,
             skinBuffer = skinBuffer,
@@ -657,6 +689,17 @@ class ComputeShaderTransformRenderer private constructor() :
             modelNormalMatrix = modelNormalMatrix,
             modelTangentMatrix = modelTangentMatrix,
         )
+
+        val commandEncoder = device.createCommandEncoder()
+        commandEncoder.createComputePass { "BlazeRod transform pass" }.use { pass ->
+            dispatchCompute(computeOutput, pass)
+        }
+        if (irisVertexFormat) {
+            commandEncoder.memoryBarrier(CommandEncoderExt.BARRIER_STORAGE_BUFFER_BIT)
+            commandEncoder.createComputePass { "BlazeRod Iris attribute pass" }.use { pass ->
+                dispatchIrisAttributes(computeOutput, pass)
+            }
+        }
 
         commandEncoder.memoryBarrier(CommandEncoderExt.BARRIER_STORAGE_BUFFER_BIT or CommandEncoderExt.BARRIER_VERTEX_BUFFER_BIT)
 

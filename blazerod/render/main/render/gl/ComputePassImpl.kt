@@ -50,6 +50,7 @@ class ComputePassImpl(
         if (this.pipeline?.info() != pipeline) {
             this.setSimpleUniforms.addAll(this.simpleUniforms.keys)
             this.setSimpleUniforms.addAll(this.samplerUniforms.keys)
+            this.storageBuffers.clear()
         }
 
         val backendExt = device as GpuDeviceExtInternal
