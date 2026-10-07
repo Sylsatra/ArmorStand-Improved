@@ -56,6 +56,7 @@ class ComputeShaderTransformRenderer private constructor() :
             skinned: Boolean = false,
             irisVertexFormat: Boolean = false,
             morphed: Boolean = false,
+            irisSourceNormals: Boolean = false,
         ) : this(Unit.run {
             var item = BitmapItem()
             if (skinned) {
@@ -67,16 +68,21 @@ class ComputeShaderTransformRenderer private constructor() :
             if (morphed) {
                 item += ELEMENT_MORPHED
             }
+            if (irisSourceNormals) {
+                item += ELEMENT_IRIS_SOURCE_NORMALS
+            }
             item
         })
 
         constructor(
             material: RenderMaterial<*>,
             irisVertexFormat: Boolean,
+            irisSourceNormals: Boolean,
         ) : this(
             skinned = material.skinned,
             irisVertexFormat = irisVertexFormat,
-            morphed = material.morphed
+            morphed = material.morphed,
+            irisSourceNormals = irisSourceNormals,
         )
 
         val skinned
@@ -85,6 +91,8 @@ class ComputeShaderTransformRenderer private constructor() :
             get() = ELEMENT_IRIS_VERTEX_FORMAT in bitmap
         val morphed
             get() = ELEMENT_MORPHED in bitmap
+        val irisSourceNormals
+            get() = ELEMENT_IRIS_SOURCE_NORMALS in bitmap
 
         fun nameSuffix() = buildString {
             if (skinned) {
@@ -96,12 +104,16 @@ class ComputeShaderTransformRenderer private constructor() :
             if (morphed) {
                 append("_morphed")
             }
+            if (irisSourceNormals) {
+                append("_iris_source_normals")
+            }
         }
 
         companion object {
             val ELEMENT_SKINNED = BitmapItem.Element.of(0)
             val ELEMENT_IRIS_VERTEX_FORMAT = BitmapItem.Element.of(1)
             val ELEMENT_MORPHED = BitmapItem.Element.of(2)
+            val ELEMENT_IRIS_SOURCE_NORMALS = BitmapItem.Element.of(3)
         }
 
         inline operator fun plus(element: BitmapItem.Element) =
@@ -114,7 +126,7 @@ class ComputeShaderTransformRenderer private constructor() :
             element in bitmap
 
         override fun toString(): String {
-            return "PipelineInfo(skinned=$skinned, irisVertexFormat=$irisVertexFormat, morphed=$morphed)"
+            return "PipelineInfo(skinned=$skinned, irisVertexFormat=$irisVertexFormat, morphed=$morphed, irisSourceNormals=$irisSourceNormals)"
         }
     }
 
@@ -134,10 +146,15 @@ class ComputeShaderTransformRenderer private constructor() :
         private val pipelineCache = mutableMapOf<RenderMaterial.Descriptor, Int2ReferenceMap<ComputePipeline>>()
         private val irisAttributePipelineCache = mutableMapOf<Pair<RenderMaterial.Descriptor, Boolean>, ComputePipeline>()
 
-        private fun getPipeline(material: RenderMaterial<*>, irisVertexFormat: Boolean): ComputePipeline {
+        private fun getPipeline(
+            material: RenderMaterial<*>,
+            irisVertexFormat: Boolean,
+            irisSourceNormals: Boolean,
+        ): ComputePipeline {
             val pipelineInfo = PipelineInfo(
                 material = material,
                 irisVertexFormat = irisVertexFormat,
+                irisSourceNormals = irisSourceNormals,
             )
             val materialMap = pipelineCache.getOrPut(material.descriptor) { Int2ReferenceAVLTreeMap() }
             return materialMap.getOrPut(pipelineInfo.bitmap.inner) {
@@ -151,6 +168,10 @@ class ComputeShaderTransformRenderer private constructor() :
                     if (pipelineInfo.irisVertexFormat) {
                         withShaderDefine("IRIS_VERTEX_FORMAT")
                         withStorageBuffer("IrisTriangleIndicesData")
+                    }
+                    if (pipelineInfo.irisSourceNormals) {
+                        withShaderDefine("IRIS_SOURCE_NORMALS")
+                        withStorageBuffer("IrisSourceNormalsData")
                     }
                     if (pipelineInfo.morphed) {
                         withShaderDefine("MORPHED")
@@ -235,6 +256,14 @@ class ComputeShaderTransformRenderer private constructor() :
         } else {
             null
         }
+        val sourceNormals = primitive.vertexNormals
+        val irisSourceNormals = if (irisVertexFormat && sourceNormals != null) {
+            primitive.irisSourceNormalBuffer {
+                IrisVertexAttributes.packSourceVertexNormals(sourceNormals, primitive.vertices)
+            }
+        } else {
+            null
+        }
         var computePass: ComputePass? = null
         var targetVertexData: GpuBufferSlice
         val computeDataUniformBufferSlice: GpuBufferSlice
@@ -280,6 +309,7 @@ class ComputeShaderTransformRenderer private constructor() :
             val pipeline = getPipeline(
                 material = material,
                 irisVertexFormat = irisVertexFormat,
+                irisSourceNormals = irisSourceNormals != null,
             )
 
             computePass = commandEncoder.createComputePass { "BlazeRod compute pass" }
@@ -295,6 +325,7 @@ class ComputeShaderTransformRenderer private constructor() :
                 setStorageBuffer("SourceVertexData", primitive.gpuVertexBuffer!!.inner.slice())
                 setStorageBuffer("TargetVertexData", targetVertexData)
                 irisSourceIndices?.let { setStorageBuffer("IrisTriangleIndicesData", it) }
+                irisSourceNormals?.let { setStorageBuffer("IrisSourceNormalsData", it) }
                 setUniform("ComputeData", computeDataUniformBufferSlice)
                 skinJointBufferSlice?.let { skinJointBuffer ->
                     if (device.supportSsbo) {
@@ -348,7 +379,7 @@ class ComputeShaderTransformRenderer private constructor() :
             }
             val attributePipeline = getIrisAttributePipeline(
                 material = material,
-                generateNormals = material.descriptor.id == 0,
+                generateNormals = material.descriptor.id == 0 && primitive.vertexNormals == null,
             )
             val attributeEncoder = device.createCommandEncoder()
             attributeEncoder.memoryBarrier(CommandEncoderExt.BARRIER_STORAGE_BUFFER_BIT)
@@ -447,7 +478,8 @@ class ComputeShaderTransformRenderer private constructor() :
         }
         val requiredStorageBindings = 3 +
             (if (primitive.material.morphed) 5 else 0) +
-            (if (primitive.material.skinned) 1 else 0)
+            (if (primitive.material.skinned) 1 else 0) +
+            (if (primitive.vertexNormals != null) 1 else 0)
         return requiredStorageBindings <= RenderSystem.getDevice().maxSsboBindings
     }
 

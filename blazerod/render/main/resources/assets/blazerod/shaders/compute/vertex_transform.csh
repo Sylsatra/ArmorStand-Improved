@@ -9,6 +9,13 @@ layout(std430) buffer IrisTriangleIndicesData {
 };
 #endif// IRIS_VERTEX_FORMAT
 
+#ifdef IRIS_SOURCE_NORMALS
+#define WITH_NORMAL
+layout(std430) buffer IrisSourceNormalsData {
+    float IrisSourceNormals[];
+};
+#endif// IRIS_SOURCE_NORMALS
+
 #moj_import <blazerod:joint.glsl>
 #moj_import <blazerod:morph.glsl>
 
@@ -35,7 +42,9 @@ struct SourceVertex {
 #elif INPUT_MATERIAL == 1
 #error PBR material is not supported
 #elif INPUT_MATERIAL == 2
+#ifndef WITH_NORMAL
 #define WITH_NORMAL
+#endif// WITH_NORMAL
 #ifdef SKINNED
 struct SourceVertex {
     vec3 position;
@@ -116,7 +125,17 @@ void main() {
     SourceVertex sourceVertex = SourceVertices[sourceVertexId];
     vec3 finalPosition = sourceVertex.position;
     vec4 finalColor = unpackUnorm4x8(uint(sourceVertex.color));
-    #ifdef WITH_NORMAL
+    #ifdef IRIS_SOURCE_NORMALS
+    vec3 sourceNormal = vec3(
+        IrisSourceNormals[sourceVertexId * 3u],
+        IrisSourceNormals[sourceVertexId * 3u + 1u],
+        IrisSourceNormals[sourceVertexId * 3u + 2u]
+    );
+    float sourceNormalLengthSquared = dot(sourceNormal, sourceNormal);
+    vec3 finalNormal = sourceNormalLengthSquared > 1e-12 && !isnan(sourceNormalLengthSquared) && !isinf(sourceNormalLengthSquared)
+        ? sourceNormal * inversesqrt(sourceNormalLengthSquared)
+        : vec3(0, 1, 0);
+    #elif defined(WITH_NORMAL)
     vec3 finalNormal = normalize(unpackSnorm4x8(uint(sourceVertex.normal)).xyz);
     #else
     vec3 finalNormal = vec3(0, 1, 0);
@@ -142,7 +161,11 @@ void main() {
     #endif// SKINNED
 
     #ifdef WITH_NORMAL
-    finalNormal = normalize(mat3(ModelNormalMatrix) * finalNormal);
+    finalNormal = mat3(ModelNormalMatrix) * finalNormal;
+    float finalNormalLengthSquared = dot(finalNormal, finalNormal);
+    finalNormal = finalNormalLengthSquared > 1e-12 && !isnan(finalNormalLengthSquared) && !isinf(finalNormalLengthSquared)
+        ? finalNormal * inversesqrt(finalNormalLengthSquared)
+        : vec3(0, 1, 0);
     #endif// WITH_NORMAL
 
     finalTexCoord = GET_MORPHED_VERTEX_TEX_COORD(finalTexCoord);

@@ -109,6 +109,24 @@ class IrisVertexAttributesTest {
     }
 
     @Test
+    fun gpuSourceNormalsUseNativeFloatStorage() {
+        val normals = floatArrayOf(0.25f, -0.5f, 1f, -1f, 0.75f, 0f)
+
+        val packed = IrisVertexAttributes.packSourceVertexNormals(normals, 2)
+
+        assertEquals(normals.size * Float.SIZE_BYTES, packed.remaining())
+        assertEquals(ByteOrder.nativeOrder(), packed.order())
+        assertArrayEquals(normals, FloatArray(normals.size) { packed.getFloat(it * Float.SIZE_BYTES) }, 0f)
+    }
+
+    @Test
+    fun gpuSourceNormalsRequireThreeComponentsPerVertex() {
+        assertThrows(IllegalArgumentException::class.java) {
+            IrisVertexAttributes.packSourceVertexNormals(floatArrayOf(0f, 1f, 0f), 2)
+        }
+    }
+
+    @Test
     fun mirroredUvsPreserveIrisHandedness() {
         val buffer = vertices(
             floatArrayOf(0f, 0f, 0f, 0f, 0f),

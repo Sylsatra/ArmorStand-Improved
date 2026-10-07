@@ -37,6 +37,15 @@ object IrisVertexAttributes {
         return buffer
     }
 
+    fun packSourceVertexNormals(normals: FloatArray, vertexCount: Int): ByteBuffer {
+        require(normals.size.toLong() == vertexCount.toLong() * 3)
+        val buffer = ByteBuffer.allocateDirect(Math.multiplyExact(normals.size, Float.SIZE_BYTES))
+            .order(ByteOrder.nativeOrder())
+        normals.forEach { buffer.putFloat(it) }
+        buffer.flip()
+        return buffer
+    }
+
     fun buildTopology(vertexCount: Int, mode: VertexFormat.Mode, indices: IntArray?): Topology {
         require(vertexCount >= 0)
         indices?.forEach { require(it in 0 until vertexCount) }

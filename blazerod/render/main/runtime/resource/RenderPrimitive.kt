@@ -11,6 +11,7 @@ import top.fifthlight.blazerod.extension.extraUsage
 import top.fifthlight.blazerod.render.GpuIndexBuffer
 import top.fifthlight.blazerod.render.RefCountedGpuBuffer
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class RenderPrimitive @JvmOverloads constructor(
     val vertices: Int,
@@ -24,6 +25,7 @@ class RenderPrimitive @JvmOverloads constructor(
     val vertexNormals: FloatArray? = null,
 ) : AbstractRefCount() {
     private var irisSourceVertexBuffer: GpuBuffer? = null
+    private var irisSourceNormalBuffer: GpuBuffer? = null
 
     override val typeId: String
         get() = "primitive"
@@ -37,13 +39,16 @@ class RenderPrimitive @JvmOverloads constructor(
         } else {
             require(targets != null) { "Non-empty target groups with empty targets" }
         }
+        require(vertexNormals == null || vertexNormals.size.toLong() == vertices.toLong() * 3) {
+            "Vertex normal count does not match primitive vertex count"
+        }
     }
 
     val gpuComplete = gpuVertexBuffer != null && targets?.gpuComplete != false
     val cpuComplete = cpuVertexBuffer != null && targets?.cpuComplete != false
 
     val supportsIrisCompute: Boolean
-        get() = gpuComplete && vertexNormals == null && (indexBuffer == null || indexBuffer.cpuIndices != null)
+        get() = gpuComplete && (indexBuffer == null || indexBuffer.cpuIndices != null)
 
     fun irisSourceVertexBuffer(createData: () -> ByteBuffer): GpuBufferSlice {
         check(supportsIrisCompute) { "Primitive cannot provide GPU Iris vertex mapping" }
@@ -54,6 +59,19 @@ class RenderPrimitive @JvmOverloads constructor(
                 GpuBufferExt.EXTRA_USAGE_STORAGE_BUFFER,
                 createData(),
             ).also { irisSourceVertexBuffer = it }
+        }
+        return buffer.slice()
+    }
+
+    fun irisSourceNormalBuffer(createData: () -> ByteBuffer): GpuBufferSlice {
+        check(supportsIrisCompute && vertexNormals != null) { "Primitive cannot provide GPU Iris source normals" }
+        val buffer = irisSourceNormalBuffer ?: run {
+            RenderSystem.getDevice().createBuffer(
+                null,
+                0,
+                GpuBufferExt.EXTRA_USAGE_STORAGE_BUFFER,
+                createData().order(ByteOrder.nativeOrder()),
+            ).also { irisSourceNormalBuffer = it }
         }
         return buffer.slice()
     }
@@ -92,6 +110,8 @@ class RenderPrimitive @JvmOverloads constructor(
     override fun onClosed() {
         irisSourceVertexBuffer?.close()
         irisSourceVertexBuffer = null
+        irisSourceNormalBuffer?.close()
+        irisSourceNormalBuffer = null
         gpuVertexBuffer?.decreaseReferenceCount()
         indexBuffer?.decreaseReferenceCount()
         material.decreaseReferenceCount()
