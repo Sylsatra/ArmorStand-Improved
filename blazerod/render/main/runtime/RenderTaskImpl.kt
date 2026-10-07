@@ -4,6 +4,8 @@ import org.joml.Matrix4f
 import org.joml.Matrix4fc
 import top.fifthlight.blazerod.BlazeRod
 import top.fifthlight.blazerod.api.resource.RenderTask
+import top.fifthlight.blazerod.render.IrisApis
+import top.fifthlight.blazerod.render.IrisEntityIds
 import top.fifthlight.blazerod.runtime.data.LocalMatricesBuffer
 import top.fifthlight.blazerod.runtime.data.MorphTargetBuffer
 import top.fifthlight.blazerod.runtime.data.RenderSkinBuffer
@@ -19,6 +21,7 @@ class RenderTaskImpl private constructor(
     private var _skinBuffer: List<CowBuffer<RenderSkinBuffer>>? = null,
     private var _morphTargetBuffer: List<CowBuffer<MorphTargetBuffer>>? = null,
     private var released: Boolean = true,
+    private var _irisEntityIds: IrisEntityIds = IrisEntityIds(),
 ) : RenderTask {
     val instance: ModelInstanceImpl
         get() = checkNotNull(_instance) { "Bad RenderTask" }
@@ -36,6 +39,8 @@ class RenderTaskImpl private constructor(
         }
     val modelMatrix: Matrix4f
         get() = _modelMatrix
+    val irisEntityIds: IrisEntityIds
+        get() = _irisEntityIds
     val localMatricesBuffer: CowBuffer<LocalMatricesBuffer>
         get() = checkNotNull(_localMatricesBuffer) { "Bad RenderTask" }
     val skinBuffer: List<CowBuffer<RenderSkinBuffer>>
@@ -52,6 +57,7 @@ class RenderTaskImpl private constructor(
         _light = -1
         _overlay = -1
         _modelMatrix.identity()
+        _irisEntityIds = IrisEntityIds()
         _localMatricesBuffer = null
         _skinBuffer = null
         _morphTargetBuffer = null
@@ -95,6 +101,7 @@ class RenderTaskImpl private constructor(
             this._light = light
             this._overlay = overlay
             this._modelMatrix.set(modelMatrix)
+            this._irisEntityIds = IrisApis.captureEntityIds()
             this._localMatricesBuffer = localMatricesBuffer
             this._skinBuffer = skinBuffer
             this._morphTargetBuffer = morphTargetBuffer
@@ -136,6 +143,10 @@ class TaskMap : AutoCloseable {
             return
         }
         closed = true
+        discardTasks()
+    }
+
+    fun discardTasks() {
         for ((_, tasks) in tasks) {
             for (task in tasks) {
                 task.release()

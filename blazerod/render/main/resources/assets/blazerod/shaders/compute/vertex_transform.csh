@@ -72,8 +72,10 @@ struct TargetVertex {
     uint uv1;// vec2 of short
     uint uv2;// vec2 of short
     uint normal;// vec3 of byte, plus 1 byte of padding
-    uvec2 iris_Entity;// vec3 of short, force padded to 8 byte
-    vec2 mc_midTexCoord;
+    uint iris_Entity0;
+    uint iris_Entity1;
+    float mc_midTexCoordU;
+    float mc_midTexCoordV;
     int at_tangent;// vec4 of byte
 };
 #endif// IRIS_VERTEX_FORMAT
@@ -140,8 +142,10 @@ void main() {
     targetVertex.normal = packSnorm4x8(vec4(finalNormal, 0));
 
     #ifdef IRIS_VERTEX_FORMAT
-    targetVertex.iris_Entity = uvec2(0);
-    targetVertex.mc_midTexCoord = vec2(0.0);
+    targetVertex.iris_Entity0 = 0u;
+    targetVertex.iris_Entity1 = 0u;
+    targetVertex.mc_midTexCoordU = 0.0;
+    targetVertex.mc_midTexCoordV = 0.0;
     targetVertex.at_tangent = 0;
     #endif// IRIS_VERTEX_FORMAT
 

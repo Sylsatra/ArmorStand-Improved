@@ -9,7 +9,7 @@ import top.fifthlight.blazerod.render.GpuIndexBuffer
 import top.fifthlight.blazerod.render.RefCountedGpuBuffer
 import java.nio.ByteBuffer
 
-class RenderPrimitive(
+class RenderPrimitive @JvmOverloads constructor(
     val vertices: Int,
     val vertexFormatMode: VertexFormat.Mode,
     val gpuVertexBuffer: RefCountedGpuBuffer?,
@@ -18,6 +18,7 @@ class RenderPrimitive(
     val material: RenderMaterial<*>,
     val targets: Targets?,
     val targetGroups: List<MorphTargetGroup>,
+    val vertexNormals: FloatArray? = null,
 ) : AbstractRefCount() {
     override val typeId: String
         get() = "primitive"

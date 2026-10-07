@@ -27,6 +27,18 @@ test_suite(
     tests = [
         ":physics_transform_util_test",
         ":transform_map_test",
+        ":texture_alpha_mode_test",
     ],
     visibility = ["//blazerod/render/main/layout:__pkg__"],
+)
+
+kt_junit_test(
+    name = "texture_alpha_mode_test",
+    srcs = ["TextureAlphaModeTest.kt"],
+    test_class = "top.fifthlight.blazerod.runtime.test.TextureAlphaModeTest",
+    deps = [
+        "//blazerod/model/model-base",
+        "//blazerod/render/main/runtime/load",
+        "@maven//:org_jetbrains_kotlin_kotlin_test",
+    ],
 )

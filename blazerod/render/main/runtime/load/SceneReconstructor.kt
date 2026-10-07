@@ -49,7 +49,7 @@ class SceneReconstructor private constructor(private val info: GpuLoadModelLoadI
             name = materialLoadInfo.name,
             baseColor = materialLoadInfo.baseColor,
             baseColorTexture = loadTexture(materialLoadInfo.baseColorTexture),
-            alphaMode = materialLoadInfo.alphaMode,
+            alphaMode = materialLoadInfo.textureAlphaMode?.await() ?: materialLoadInfo.alphaMode,
             alphaCutoff = materialLoadInfo.alphaCutoff,
             doubleSided = materialLoadInfo.doubleSided,
             skinned = materialLoadInfo.skinned,
@@ -106,6 +106,7 @@ class SceneReconstructor private constructor(private val info: GpuLoadModelLoadI
                                 )
                             },
                             targetGroups = targets?.targetGroups ?: listOf(),
+                            vertexNormals = primitiveInfo.vertexNormals,
                         ),
                         skinIndex = primitiveInfo.skinIndex,
                         morphedPrimitiveIndex = primitiveInfo.morphedPrimitiveIndex,

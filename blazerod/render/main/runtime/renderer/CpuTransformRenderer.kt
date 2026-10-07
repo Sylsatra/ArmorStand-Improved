@@ -5,12 +5,12 @@ import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.textures.GpuTextureView
 import com.mojang.blaze3d.vertex.VertexFormat
 import com.mojang.blaze3d.vertex.VertexFormatElement
+import org.lwjgl.system.MemoryUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.runBlocking
 import net.minecraft.client.Minecraft
-import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.client.renderer.texture.OverlayTexture
 import org.joml.Matrix4f
 import org.joml.Matrix4fc
@@ -25,13 +25,16 @@ import top.fifthlight.blazerod.model.util.getUByteNormalized
 import top.fifthlight.blazerod.model.util.toNormalizedSByte
 import top.fifthlight.blazerod.model.util.toNormalizedUByte
 import top.fifthlight.blazerod.render.BlazerodVertexFormatElements
+import top.fifthlight.blazerod.render.IrisApis
 import top.fifthlight.blazerod.render.setIndexBuffer
 import top.fifthlight.blazerod.runtime.RenderSceneImpl
 import top.fifthlight.blazerod.runtime.RenderTaskImpl
 import top.fifthlight.blazerod.runtime.data.MorphTargetBuffer
 import top.fifthlight.blazerod.runtime.data.RenderSkinBuffer
 import top.fifthlight.blazerod.runtime.renderer.util.CpuBufferPool
-import top.fifthlight.blazerod.runtime.resource.RenderMaterial
+import top.fifthlight.blazerod.runtime.renderer.util.EntityMaterialPipelines
+import top.fifthlight.blazerod.runtime.renderer.util.IrisVertexAttributes
+import top.fifthlight.blazerod.runtime.renderer.util.SkinningNormals
 import top.fifthlight.blazerod.runtime.resource.RenderPrimitive
 import top.fifthlight.blazerod.util.gpushaderpool.GpuShaderDataPool
 import top.fifthlight.blazerod.util.gpushaderpool.upload
@@ -65,6 +68,7 @@ class CpuTransformRenderer private constructor() :
         supportSlicing = false,
     )
     private val cpuPool = CpuBufferPool()
+    private val topologies = WeakHashMap<RenderPrimitive, Pair<IrisVertexAttributes.Topology, IrisVertexAttributes.Topology>>()
 
     private fun VertexFormat.getOffsetOrNull(element: VertexFormatElement) = if (contains(element)) {
         getOffset(element)
@@ -82,8 +86,9 @@ class CpuTransformRenderer private constructor() :
         targetBuffer: MorphTargetBuffer?,
         morphTargetData: RenderPrimitive.Targets?,
         modelNormalMatrix: Matrix4fc,
+        targetVertexFormat: VertexFormat,
+        vertexNormals: FloatArray?,
     ): ByteBuffer {
-        val targetVertexFormat = RenderPipelines.ENTITY_TRANSLUCENT.vertexFormat
         val targetPositionOffset = targetVertexFormat.getOffset(VertexFormatElement.POSITION)
         val targetColorOffset = targetVertexFormat.getOffset(VertexFormatElement.COLOR)
         val targetTextureOffset = targetVertexFormat.getOffset(VertexFormatElement.UV0)
@@ -105,6 +110,7 @@ class CpuTransformRenderer private constructor() :
         val transformedBuffer = cpuPool
             .allocate(sourceVertices * targetVertexFormat.vertexSize)
             .order(ByteOrder.nativeOrder())
+        MemoryUtil.memSet(MemoryUtil.memAddress(transformedBuffer), 0, transformedBuffer.remaining().toLong())
 
         val processorCount = Runtime.getRuntime().availableProcessors()
         val taskCount = if (sourceVertices > processorCount && sourceVertices > 1000) {
@@ -125,6 +131,8 @@ class CpuTransformRenderer private constructor() :
                     }
                     val positionVector = Vector3f()
                     val normalVector = Vector3f(0f, 1f, 0f)
+                    val skinnedNormal = Vector3f()
+                    val jointNormal = Vector3f()
                     val jointPosition = Vector3f()
                     val skinnedPosition = Vector3f()
                     val skinMatrix = Matrix4f()
@@ -133,6 +141,7 @@ class CpuTransformRenderer private constructor() :
                     for (vertexIndex in startVertex until endVertex) {
                         val sourceOffset = vertexIndex * sourceVertexFormat.vertexSize
                         val targetOffset = vertexIndex * targetVertexFormat.vertexSize
+                        transformedBuffer.putInt(targetOffset + targetColorOffset, -1)
                         if (sourcePositionOffset != null) {
                             positionVector.set(sourceOffset + sourcePositionOffset, sourceVertexBuffer)
                             if (positionTarget != null && morphTargetData != null) {
@@ -244,13 +253,28 @@ class CpuTransformRenderer private constructor() :
                         )
                         transformedBuffer.putShort(targetOffset + targetLightOffset + 0, lightU)
                         transformedBuffer.putShort(targetOffset + targetLightOffset + 2, lightV)
-                        if (sourceNormalOffset != null) {
+                        normalVector.set(0f, 1f, 0f)
+                        if (vertexNormals != null) {
+                            val normalOffset = vertexIndex * 3
+                            normalVector.set(vertexNormals[normalOffset], vertexNormals[normalOffset + 1], vertexNormals[normalOffset + 2])
+                        } else if (sourceNormalOffset != null) {
                             normalVector.set(
                                 sourceVertexBuffer.getSByteNormalized(sourceOffset + sourceNormalOffset + 0),
                                 sourceVertexBuffer.getSByteNormalized(sourceOffset + sourceNormalOffset + 1),
                                 sourceVertexBuffer.getSByteNormalized(sourceOffset + sourceNormalOffset + 2),
-                            ).normalize()
-                            modelNormalMatrix.transformDirection(normalVector).normalize()
+                            )
+                        }
+                        if (sourceJointOffset != null && sourceWeightOffset != null && skinBuffer != null) {
+                            SkinningNormals.transform(
+                                normalVector, sourceVertexBuffer, sourceOffset + sourceJointOffset,
+                                sourceOffset + sourceWeightOffset, skinBuffer, skinnedNormal, jointNormal, skinMatrix,
+                            )
+                        }
+                        modelNormalMatrix.transformDirection(normalVector)
+                        if (normalVector.lengthSquared() > 1E-12f && normalVector.isFinite) {
+                            normalVector.normalize()
+                        } else {
+                            normalVector.set(0f, 1f, 0f)
                         }
                         transformedBuffer.put(
                             targetOffset + targetNormalOffset + 0,
@@ -275,6 +299,7 @@ class CpuTransformRenderer private constructor() :
 
     private val modelMatrix = Matrix4f()
     private val modelNormalMatrix = Matrix4f()
+    private val modelTangentMatrix = Matrix4f()
     private val baseColor = Vector4f()
     override fun render(
         colorFrameBuffer: GpuTextureView,
@@ -293,10 +318,13 @@ class CpuTransformRenderer private constructor() :
 
         task.localMatricesBuffer.content.getPositionMatrix(primitiveIndex, modelMatrix)
         modelMatrix.mulLocal(task.modelMatrix)
+        modelTangentMatrix.set(modelMatrix)
         modelMatrix.normal(modelNormalMatrix)
         modelMatrix.mulLocal(RenderSystem.getModelViewStack())
 
-        val convertedBuffer = transformVertex(
+        val pipeline = EntityMaterialPipelines.pipeline(material)
+        val targetVertexFormat = pipeline.vertexFormat
+        var convertedBuffer = transformVertex(
             sourceVertexFormat = material.vertexFormat,
             sourceVertices = primitive.vertices,
             sourceVertexBuffer = primitive.cpuVertexBuffer!!,
@@ -306,7 +334,39 @@ class CpuTransformRenderer private constructor() :
             targetBuffer = targetBuffer,
             morphTargetData = primitive.targets,
             modelNormalMatrix = modelNormalMatrix,
+            targetVertexFormat = targetVertexFormat,
+            vertexNormals = primitive.vertexNormals,
         )
+        var vertexCount = primitive.vertices
+        var vertexMode = primitive.vertexFormatMode
+        val indexBuffer = primitive.indexBuffer
+        var indexed = indexBuffer != null
+        if (IrisApis.shaderPackInUse) {
+            val (topology, expandedTopology) = topologies.getOrPut(primitive) {
+                val mode = if (indexBuffer != null && indexBuffer.cpuIndices == null) VertexFormat.Mode.LINES else primitive.vertexFormatMode
+                val topology = IrisVertexAttributes.buildTopology(primitive.vertices, mode, indexBuffer?.cpuIndices)
+                topology to IrisVertexAttributes.buildTopology(topology.triangleIndices.size, VertexFormat.Mode.TRIANGLES, null)
+            }
+            if (topology.triangleIndices.isNotEmpty()) {
+                val sourceBuffer = convertedBuffer
+                vertexCount = topology.triangleIndices.size
+                convertedBuffer = cpuPool.allocate(vertexCount * targetVertexFormat.vertexSize).order(ByteOrder.nativeOrder())
+                val sourceAddress = MemoryUtil.memAddress(sourceBuffer)
+                val targetAddress = MemoryUtil.memAddress(convertedBuffer)
+                topology.triangleIndices.forEachIndexed { outputIndex, inputIndex ->
+                    MemoryUtil.memCopy(sourceAddress + inputIndex.toLong() * targetVertexFormat.vertexSize,
+                        targetAddress + outputIndex.toLong() * targetVertexFormat.vertexSize, targetVertexFormat.vertexSize.toLong())
+                }
+                vertexMode = VertexFormat.Mode.TRIANGLES
+                indexed = false
+            }
+            IrisVertexAttributes.write(
+                convertedBuffer, targetVertexFormat, vertexCount,
+                if (indexed || topology.triangleIndices.isEmpty()) topology else expandedTopology,
+                task.irisEntityIds, modelTangentMatrix,
+                generateNormals = primitive.vertexNormals == null && !material.vertexFormat.contains(VertexFormatElement.NORMAL),
+            )
+        }
 
         val device = RenderSystem.getDevice()
         val commandEncoder = device.createCommandEncoder()
@@ -329,29 +389,20 @@ class CpuTransformRenderer private constructor() :
             OptionalDouble.empty()
         ).use {
             with(it) {
-                setPipeline(RenderPipelines.ENTITY_TRANSLUCENT)
+                setPipeline(pipeline)
                 RenderSystem.bindDefaultUniforms(this)
                 setUniform("DynamicTransforms", dynamicUniforms)
                 bindSampler("Sampler2", Minecraft.getInstance().gameRenderer.lightTexture().textureView)
                 bindSampler("Sampler1", Minecraft.getInstance().gameRenderer.overlayTexture().texture.textureView)
-                when (material) {
-                    is RenderMaterial.Pbr -> {}
-                    is RenderMaterial.Unlit -> {
-                        bindSampler("Sampler0", material.baseColorTexture.view)
-                    }
+                EntityMaterialPipelines.bindBaseColor(this, material)
 
-                    is RenderMaterial.Vanilla -> {
-                        bindSampler("Sampler0", material.baseColorTexture.view)
-                    }
-                }
-
-                setVertexFormatMode(primitive.vertexFormatMode)
+                setVertexFormatMode(vertexMode)
                 setVertexBuffer(0, vertexBuffer.buffer())
-                primitive.indexBuffer?.let { indices ->
+                indexBuffer?.takeIf { indexed }?.let { indices ->
                     setIndexBuffer(indices)
                     drawIndexed(0, 0, indices.length, 1)
                 } ?: run {
-                    draw(0, primitive.vertices)
+                    draw(0, vertexCount)
                 }
             }
         }
@@ -363,6 +414,7 @@ class CpuTransformRenderer private constructor() :
     }
 
     override fun close() {
+        topologies.clear()
         dataPool.close()
         cpuPool.close()
     }

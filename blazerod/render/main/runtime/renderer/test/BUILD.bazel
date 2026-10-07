@@ -1,0 +1,26 @@
+load("//rule:junit_test.bzl", "kt_junit_test")
+
+kt_junit_test(
+    name = "skinning_normals_test",
+    srcs = ["SkinningNormalsTest.kt"],
+    test_class = "top.fifthlight.blazerod.runtime.renderer.test.SkinningNormalsTest",
+    deps = [
+        "//blazerod/render/main/runtime/data",
+        "//blazerod/render/main/runtime/renderer",
+        "@maven//:org_jetbrains_kotlin_kotlin_test",
+        "@maven//:org_joml_joml",
+    ],
+)
+
+kt_junit_test(
+    name = "iris_vertex_attributes_test",
+    srcs = ["IrisVertexAttributesTest.kt"],
+    test_class = "top.fifthlight.blazerod.runtime.renderer.test.IrisVertexAttributesTest",
+    deps = [
+        "//blazerod/render/expect",
+        "//blazerod/render/main/runtime/renderer",
+        "//blazerod/render/game:remapped_client_access_widened_named",
+        "@maven//:org_jetbrains_kotlin_kotlin_test",
+        "@maven//:org_joml_joml",
+    ],
+)

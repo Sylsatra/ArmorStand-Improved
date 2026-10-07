@@ -1649,18 +1649,27 @@ class PmxLoader : ModelFileLoader {
                 materialToMeshIds[materialIndex] = meshId
 
                 val pmxMaterial = materialData?.material ?: return@forEachIndexed
+                val baseColorTexture = pmxMaterial.textureIndex.takeIf {
+                    it >= 0 && it in textures.indices
+                }?.let {
+                    textures.getOrNull(it)
+                }?.let {
+                    Material.TextureInfo(it)
+                }
                 val material = Material.Unlit(
                     name = pmxMaterial.nameLocal,
                     baseColor = pmxMaterial.diffuseColor,
-                    baseColorTexture = pmxMaterial.textureIndex.takeIf {
-                        it >= 0 && it in textures.indices
-                    }?.let {
-                        textures.getOrNull(it)
-                    }?.let {
-                        Material.TextureInfo(it)
+                    baseColorTexture = baseColorTexture,
+                    alphaMode = when {
+                        pmxMaterial.diffuseColor.a < 1f -> Material.AlphaMode.BLEND
+                        baseColorTexture != null -> Material.AlphaMode.MASK
+                        else -> Material.AlphaMode.OPAQUE
                     },
+                    alphaCutoff = .1f,
                     doubleSided = pmxMaterial.drawingFlags.noCull,
-                )
+                ).also {
+                    it.inferAlphaFromTexture = pmxMaterial.diffuseColor.a >= 1f && baseColorTexture != null
+                }
 
                 rootNodes.add(
                     Node(

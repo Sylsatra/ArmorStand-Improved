@@ -23,6 +23,7 @@ data class TextureLoadData(
     val name: String?,
     val nativeImage: NativeImage,
     val sampler: Texture.Sampler,
+    val alphaMode: Material.AlphaMode = Material.AlphaMode.OPAQUE,
 ) : AutoCloseable by nativeImage
 
 data class IndexBufferLoadData(
@@ -79,6 +80,7 @@ sealed class MaterialLoadInfo {
         override val doubleSided: Boolean,
         override val skinned: Boolean,
         override val morphed: Boolean,
+        val textureAlphaMode: Deferred<Material.AlphaMode>? = null,
     ) : MaterialLoadInfo()
 
     data class Vanilla(
@@ -120,6 +122,7 @@ data class PrimitiveLoadInfo(
     val vertexBufferIndex: Int,
     val skinIndex: Int?,
     val morphedPrimitiveIndex: Int?,
+    val vertexNormals: FloatArray? = null,
 )
 
 data class NodeLoadInfo(

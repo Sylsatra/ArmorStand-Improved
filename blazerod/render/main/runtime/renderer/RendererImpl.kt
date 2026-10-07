@@ -13,6 +13,7 @@ import top.fifthlight.blazerod.runtime.data.MorphTargetBuffer
 import top.fifthlight.blazerod.runtime.data.RenderSkinBuffer
 import top.fifthlight.blazerod.runtime.node.component.PrimitiveComponent
 import top.fifthlight.blazerod.runtime.resource.RenderPrimitive
+import top.fifthlight.blazerod.runtime.renderer.util.EntityMaterialPipelines
 import top.fifthlight.mergetools.api.ActualConstructor
 import top.fifthlight.mergetools.api.ActualImpl
 
@@ -24,25 +25,30 @@ abstract class RendererImpl<R : RendererImpl<R, T>, T : Renderer.Type<R, T>> : R
         task: RenderTask,
         scene: RenderScene,
     ) {
-        val instance = (task as RenderTaskImpl).instance
+        val task = task as RenderTaskImpl
         val scene = (scene as RenderSceneImpl)
-        for (component in scene.primitiveComponents) {
-            render(
-                colorFrameBuffer = colorFrameBuffer,
-                depthFrameBuffer = depthFrameBuffer,
-                scene = scene,
-                primitive = component.primitive,
-                primitiveIndex = component.primitiveIndex,
-                task = task,
-                skinBuffer = component.skinIndex?.let {
-                    (instance.modelData.skinBuffers.getOrNull(it)?.content
-                        ?: error("Has skin but no skin buffer"))
-                },
-                targetBuffer = component.morphedPrimitiveIndex?.let {
-                    (instance.modelData.targetBuffers.getOrNull(it)?.content
-                        ?: error("Has morph target but no morph target buffer"))
-                },
-            )
+        for (stage in 0..2) {
+            for (component in scene.primitiveComponents) {
+                if (EntityMaterialPipelines.stageOrder(component.primitive.material) != stage) {
+                    continue
+                }
+                render(
+                    colorFrameBuffer = colorFrameBuffer,
+                    depthFrameBuffer = depthFrameBuffer,
+                    scene = scene,
+                    primitive = component.primitive,
+                    primitiveIndex = component.primitiveIndex,
+                    task = task,
+                    skinBuffer = component.skinIndex?.let {
+                        (task.skinBuffer.getOrNull(it)?.content
+                            ?: error("Has skin but no skin buffer"))
+                    },
+                    targetBuffer = component.morphedPrimitiveIndex?.let {
+                        (task.morphTargetBuffer.getOrNull(it)?.content
+                            ?: error("Has morph target but no morph target buffer"))
+                    },
+                )
+            }
         }
     }
 

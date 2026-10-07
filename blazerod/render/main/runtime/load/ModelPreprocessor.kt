@@ -5,6 +5,7 @@ import com.mojang.blaze3d.vertex.VertexFormat
 import com.mojang.blaze3d.vertex.VertexFormatElement
 import kotlinx.coroutines.*
 import org.joml.Vector3f
+import org.lwjgl.system.MemoryUtil
 import top.fifthlight.blazerod.api.resource.RenderExpression
 import top.fifthlight.blazerod.api.resource.RenderExpressionGroup
 import top.fifthlight.blazerod.extension.NativeImageExt
@@ -69,10 +70,23 @@ class ModelPreprocessor private constructor(
             } catch (ex: Exception) {
                 throw Exception("Failed to load texture ${texture.name ?: "unnamed"}", ex)
             }
+            val pixelFormat = nativeImage.format()
+            val alphaMode = if (pixelFormat.hasAlpha()) {
+                val components = pixelFormat.components()
+                val alphaOffset = pixelFormat.alphaOffset() / Byte.SIZE_BITS
+                val pixels = nativeImage.pointer
+                TextureAlphaMode.classify(nativeImage.width, nativeImage.height) { x, y ->
+                    val pixelOffset = (y.toLong() * nativeImage.width + x) * components
+                    MemoryUtil.memGetByte(pixels + pixelOffset + alphaOffset).toUByte().toInt()
+                }
+            } else {
+                Material.AlphaMode.OPAQUE
+            }
             TextureLoadData(
                 name = texture.name,
                 nativeImage = nativeImage,
                 sampler = texture.sampler,
+                alphaMode = alphaMode,
             )
         }
         val index = textures.size
@@ -104,16 +118,27 @@ class ModelPreprocessor private constructor(
             morphed = morphed,
         )
 
-        is Material.Unlit -> MaterialLoadInfo.Unlit(
-            name = material.name,
-            baseColor = material.baseColor,
-            baseColorTexture = loadTextureInfo(material.baseColorTexture),
-            alphaMode = material.alphaMode,
-            alphaCutoff = material.alphaCutoff,
-            doubleSided = material.doubleSided,
-            skinned = skinned,
-            morphed = morphed,
-        )
+        is Material.Unlit -> {
+            val baseColorTexture = loadTextureInfo(material.baseColorTexture)
+            MaterialLoadInfo.Unlit(
+                name = material.name,
+                baseColor = material.baseColor,
+                baseColorTexture = baseColorTexture,
+                alphaMode = material.alphaMode,
+                alphaCutoff = material.alphaCutoff,
+                doubleSided = material.doubleSided,
+                skinned = skinned,
+                morphed = morphed,
+                textureAlphaMode = if (material.inferAlphaFromTexture && baseColorTexture != null) {
+                    val texture = textures[baseColorTexture.textureIndex]
+                    coroutineScope.async(dispatcher) {
+                        texture.await()?.alphaMode ?: Material.AlphaMode.OPAQUE
+                    }
+                } else {
+                    null
+                },
+            )
+        }
 
         is Material.Vanilla -> MaterialLoadInfo.Vanilla(
             name = material.name,
@@ -420,6 +445,23 @@ class ModelPreprocessor private constructor(
 
     private val nodeToMorphedPrimitiveMap = mutableMapOf<NodeId, MutableList<Int>>()
     private val meshToMorphedPrimitiveMap = mutableMapOf<MeshId, MutableList<Int>>()
+    private fun loadVertexNormals(
+        material: MaterialLoadInfo?,
+        skinned: Boolean,
+        attributes: Primitive.Attributes.Primitive,
+    ): FloatArray? {
+        val normal = attributes.normal ?: return null
+        val vertexFormat = material?.getVertexFormat(skinned) ?: BlazerodVertexFormats.POSITION_COLOR_TEXTURE
+        if (vertexFormat.contains(VertexFormatElement.NORMAL)) {
+            return null
+        }
+        require(normal.type == Accessor.AccessorType.VEC3 && normal.count == attributes.position.count)
+        val result = FloatArray(normal.count * 3)
+        var index = 0
+        normal.readNormalized { result[index++] = it }
+        return result
+    }
+
     private fun loadPrimitive(
         node: Node,
         mesh: Mesh,
@@ -469,6 +511,7 @@ class ModelPreprocessor private constructor(
             ),
             skinIndex = skinIndex.takeIf { skinned },
             morphedPrimitiveIndex = morphedPrimitiveIndex,
+            vertexNormals = loadVertexNormals(material, skinned, primitive.attributes),
         )
     }
 

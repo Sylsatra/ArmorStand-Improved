@@ -42,7 +42,9 @@ sealed class Material {
         override val alphaMode: AlphaMode = AlphaMode.OPAQUE,
         override val alphaCutoff: Float = .5f,
         override val doubleSided: Boolean = false,
-    ) : Material()
+    ) : Material() {
+        var inferAlphaFromTexture: Boolean = false
+    }
 
     data class Vanilla(
         override val name: String?,

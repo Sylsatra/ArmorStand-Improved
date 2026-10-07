@@ -4,6 +4,7 @@ import com.mojang.blaze3d.buffers.GpuBuffer
 import com.mojang.blaze3d.systems.RenderSystem
 import com.mojang.blaze3d.textures.GpuTexture
 import com.mojang.blaze3d.textures.TextureFormat
+import com.mojang.blaze3d.vertex.VertexFormat
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -73,6 +74,14 @@ object ModelResourceLoader {
             }
         }
         val indexBuffers = info.indexBuffers.mapAll(scope, gpuDispatcher) { indexData ->
+            val cpuIndexData = indexData.buffer.duplicate().order(indexData.buffer.order())
+            val cpuIndices = IntArray(indexData.length) { index ->
+                val offset = cpuIndexData.position() + index * indexData.type.bytes
+                when (indexData.type) {
+                    VertexFormat.IndexType.SHORT -> cpuIndexData.getShort(offset).toInt() and 0xFFFF
+                    VertexFormat.IndexType.INT -> cpuIndexData.getInt(offset)
+                }
+            }
             val device = RenderSystem.getDevice()
             val buffer = RefCountedGpuBuffer(
                 device.createBuffer(
@@ -85,6 +94,7 @@ object ModelResourceLoader {
                 type = indexData.type,
                 length = indexData.length,
                 buffer = buffer,
+                cpuIndices = cpuIndices,
             )
         }
         val vertexBuffers = info.vertexBuffers.mapAll(scope, gpuDispatcher) {
