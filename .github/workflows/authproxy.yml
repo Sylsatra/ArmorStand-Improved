@@ -15,7 +15,7 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
       - uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
