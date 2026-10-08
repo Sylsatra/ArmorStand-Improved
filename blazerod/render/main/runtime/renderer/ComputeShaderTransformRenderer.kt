@@ -628,27 +628,15 @@ class ComputeShaderTransformRenderer private constructor() :
 
         BlazeRodGpuTimer.measure(BlazeRodGpuTimer.DRAW) {
             for (stage in 0..2) {
-                if (computeItems.none {
+                val drawItems = computeItems.asSequence()
+                    .filter {
                         EntityMaterialPipelines.stageOrder(it.primitiveComponent.primitive.material) == stage
-                    }) {
-                    continue
-                }
-
-                commandEncoder.createRenderPass(
-                    { "BlazeRod render stage $stage" },
-                    colorFrameBuffer,
-                    OptionalInt.empty(),
-                    depthFrameBuffer,
-                    OptionalDouble.empty()
-                ).use { renderPass ->
-                    for (item in computeItems) {
+                    }
+                    .map { item ->
                         val task = item.renderTask
                         val primitiveComponent = item.primitiveComponent
                         val primitive = primitiveComponent.primitive
                         val material = primitive.material
-                        if (EntityMaterialPipelines.stageOrder(material) != stage) {
-                            continue
-                        }
 
                         task.localMatricesBuffer.content.getPositionMatrix(
                             primitiveComponent.primitiveIndex,
@@ -657,6 +645,8 @@ class ComputeShaderTransformRenderer private constructor() :
                         modelMatrix.mulLocal(task.modelMatrix)
                         modelMatrix.mulLocal(RenderSystem.getModelViewStack())
 
+                        // Dynamic uniform writes map a GPU buffer, so prepare them before
+                        // opening the render pass below.
                         val dynamicUniforms = RenderSystem.getDynamicUniforms().writeTransform(
                             modelMatrix,
                             material.baseColor.toVector4f(baseColor),
@@ -664,6 +654,23 @@ class ComputeShaderTransformRenderer private constructor() :
                             RenderSystem.getTextureMatrix(),
                             RenderSystem.getShaderLineWidth()
                         )
+                        item to dynamicUniforms
+                    }
+                    .toList()
+                if (drawItems.isEmpty()) continue
+
+                commandEncoder.createRenderPass(
+                    { "BlazeRod render stage $stage" },
+                    colorFrameBuffer,
+                    OptionalInt.empty(),
+                    depthFrameBuffer,
+                    OptionalDouble.empty()
+                ).use { renderPass ->
+                    for ((item, dynamicUniforms) in drawItems) {
+                        val task = item.renderTask
+                        val primitiveComponent = item.primitiveComponent
+                        val primitive = primitiveComponent.primitive
+                        val material = primitive.material
 
                         with(renderPass) {
                             setPipeline(EntityMaterialPipelines.pipeline(material))
