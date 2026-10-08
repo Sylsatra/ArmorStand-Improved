@@ -22,6 +22,21 @@ jobs:
           ndk-version: r28b
       - name: Setup Bazel
         uses: bazel-contrib/setup-bazel@0.14.0
+      - name: Test native physics
+        run: |
+          test_status=0
+          bazel test \
+            --verbose_failures \
+            --test_output=errors \
+            //blazerod/render/main/physics:kinematic_substeps_test || test_status=$?
+          if [ "$test_status" -ne 0 ]; then
+            test_binary="$(bazel info bazel-bin)/blazerod/render/main/physics/kinematic_substeps_test"
+            if [ -f "$test_binary" ]; then
+              file "$test_binary"
+              ldd "$test_binary" || true
+            fi
+          fi
+          exit "$test_status"
       - name: Build
         run: |
           bazel build \
@@ -43,8 +58,18 @@ jobs:
         run: |
           bazel test \
             --verbose_failures \
+            --test_output=errors \
             //blazerod/model:test \
             //blazerod/render:test
+      - name: Upload failed test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-test-logs
+          path: |
+            bazel-testlogs/**/test.log
+            bazel-testlogs/**/test.xml
+          if-no-files-found: ignore
       - name: Package artifacts
         run: |
           mkdir -p dist
