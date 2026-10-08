@@ -168,7 +168,7 @@ class ComputeShaderTransformRenderer private constructor() :
                     withStorageBuffer("TargetVertexData")
                     if (pipelineInfo.irisVertexFormat) {
                         withShaderDefine("IRIS_VERTEX_FORMAT")
-                        withStorageBuffer("IrisTriangleIndicesData")
+                        withShaderDefine("IRIS_DIRECT_VERTEX_FORMAT")
                     }
                     if (pipelineInfo.irisSourceNormals) {
                         withShaderDefine("IRIS_SOURCE_NORMALS")
@@ -249,15 +249,17 @@ class ComputeShaderTransformRenderer private constructor() :
         modelTangentMatrix: Matrix4fc,
     ): ComputeOutput {
         val material = primitive.material
-        val irisTopology = if (irisVertexFormat) {
+        val directIrisOutput = irisVertexFormat && material.descriptor.id == 0 && primitive.vertexNormals != null
+        val irisTopology = if (irisVertexFormat && !directIrisOutput) {
             irisTopology(primitive)
         } else {
             null
         }
         val irisExpanded = irisTopology?.triangleIndices?.isNotEmpty() == true
-        val outputVertices = if (irisExpanded) irisTopology!!.triangleIndices.size else primitive.vertices
-        val outputMode = if (irisExpanded) VertexFormat.Mode.TRIANGLES else primitive.vertexFormatMode
-        val irisSourceIndices = if (irisVertexFormat) {
+        val expandIrisOutput = irisExpanded && !directIrisOutput
+        val outputVertices = if (expandIrisOutput) irisTopology!!.triangleIndices.size else primitive.vertices
+        val outputMode = if (expandIrisOutput) VertexFormat.Mode.TRIANGLES else primitive.vertexFormatMode
+        val irisSourceIndices = if (irisVertexFormat && !directIrisOutput) {
             primitive.irisSourceVertexBuffer {
                 IrisVertexAttributes.packSourceVertexIndices(irisTopology!!, primitive.vertices)
             }
@@ -272,15 +274,18 @@ class ComputeShaderTransformRenderer private constructor() :
         } else {
             null
         }
-        val transformVertexFormat = if (irisVertexFormat) {
+        val transformVertexFormat = if (directIrisOutput) {
+            targetVertexFormat
+        } else if (irisVertexFormat) {
             BlazerodVertexFormats.ENTITY_PADDED
         } else {
             targetVertexFormat
         }
+        val transformVertices = if (directIrisOutput) outputVertices else primitive.vertices
         val transformedVertexData = vertexDataPool.allocate(
-            transformVertexFormat.vertexSize * primitive.vertices,
+            transformVertexFormat.vertexSize * transformVertices,
         )
-        val targetVertexData = if (irisVertexFormat) {
+        val targetVertexData = if (irisVertexFormat && !directIrisOutput) {
             vertexDataPool.allocate(targetVertexFormat.vertexSize * outputVertices)
         } else {
             transformedVertexData
@@ -295,15 +300,15 @@ class ComputeShaderTransformRenderer private constructor() :
 
         computeDataUniformBufferSlice = ComputeDataUniformBuffer.write {
             this.modelNormalMatrix = modelNormalMatrix
-            totalVertices = primitive.vertices.toUInt()
+            totalVertices = transformVertices.toUInt()
             uv1 = OverlayTexture.NO_OVERLAY.toUInt()
             uv2 = task.light.toUInt()
             this.modelTangentMatrix = modelTangentMatrix
             irisEntity0 = task.irisEntityIds.packed0
             irisEntity1 = task.irisEntityIds.packed1
-            this.irisExpanded = 0u
+            this.irisExpanded = if (expandIrisOutput) 1u else 0u
         }
-        irisAttributeData = if (irisVertexFormat) {
+        irisAttributeData = if (irisVertexFormat && !directIrisOutput) {
             ComputeDataUniformBuffer.write {
                 this.modelNormalMatrix = modelNormalMatrix
                 totalVertices = outputVertices.toUInt()
@@ -340,10 +345,10 @@ class ComputeShaderTransformRenderer private constructor() :
 
         val pipeline = getPipeline(
             material = material,
-            irisVertexFormat = false,
+            irisVertexFormat = directIrisOutput,
             irisSourceNormals = irisSourceNormals != null,
         )
-        val attributePipeline = if (irisVertexFormat) {
+        val attributePipeline = if (irisVertexFormat && !directIrisOutput) {
             getIrisAttributePipeline(
                 material = material,
                 generateNormals = material.descriptor.id == 0 && primitive.vertexNormals == null,
@@ -359,7 +364,7 @@ class ComputeShaderTransformRenderer private constructor() :
             vertexBuffer = targetVertexData,
             transformedVertexBuffer = transformedVertexData,
             vertices = outputVertices,
-            transformVertices = primitive.vertices,
+            transformVertices = transformVertices,
             irisAttributeInvocations = if (!irisVertexFormat) {
                 0
             } else if (irisExpanded) {
@@ -368,7 +373,7 @@ class ComputeShaderTransformRenderer private constructor() :
                 outputVertices
             },
             mode = outputMode,
-            useIndexBuffer = !irisExpanded && primitive.indexBuffer != null,
+            useIndexBuffer = !expandIrisOutput && primitive.indexBuffer != null,
             primitive = primitive,
             pipeline = pipeline,
             computeData = computeDataUniformBufferSlice,
@@ -605,11 +610,12 @@ class ComputeShaderTransformRenderer private constructor() :
                 }
             }
 
-            if (IrisApis.shaderPackInUse) {
+            if (preparedItems.any { it.computeOutput.irisAttributePipeline != null }) {
                 commandEncoder.memoryBarrier(CommandEncoderExt.BARRIER_STORAGE_BUFFER_BIT)
                 BlazeRodGpuTimer.measure(BlazeRodGpuTimer.IRIS_ATTRIBUTES) {
                     commandEncoder.createComputePass { "BlazeRod Iris attribute batch" }.use { pass ->
                         for (item in preparedItems) {
+                            if (item.computeOutput.irisAttributePipeline == null) continue
                             dispatchIrisAttributes(item.computeOutput, pass)
                         }
                     }

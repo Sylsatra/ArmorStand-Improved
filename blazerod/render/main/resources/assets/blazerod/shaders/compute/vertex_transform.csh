@@ -3,7 +3,7 @@
 #blazerod_extension version(<4.3); GL_ARB_compute_shader: require
 #blazerod_extension version(<4.3); GL_ARB_shading_language_packing: require
 
-#ifdef IRIS_VERTEX_FORMAT
+#if defined(IRIS_VERTEX_FORMAT) && !defined(IRIS_DIRECT_VERTEX_FORMAT)
 layout(std430) buffer IrisTriangleIndicesData {
     uint IrisTriangleIndices[];
 };
@@ -119,7 +119,7 @@ void main() {
     }
 
     uint sourceVertexId = vertexId;
-#ifdef IRIS_VERTEX_FORMAT
+#if defined(IRIS_VERTEX_FORMAT) && !defined(IRIS_DIRECT_VERTEX_FORMAT)
     sourceVertexId = IrisTriangleIndices[vertexId];
 #endif// IRIS_VERTEX_FORMAT
     SourceVertex sourceVertex = SourceVertices[sourceVertexId];
@@ -179,11 +179,24 @@ void main() {
     targetVertex.normal = packSnorm4x8(vec4(finalNormal, 0));
 
     #ifdef IRIS_VERTEX_FORMAT
+    #ifdef IRIS_DIRECT_VERTEX_FORMAT
+    vec3 tangent = abs(finalNormal.y) < 0.999
+        ? vec3(finalNormal.z, 0.0, -finalNormal.x)
+        : vec3(0.0, -finalNormal.z, finalNormal.y);
+    targetVertex.iris_Entity0 = IrisEntity0;
+    targetVertex.iris_Entity1 = IrisEntity1;
+    // Unlit BlazeRod materials have no normal-map input. Their indexed
+    // vertices can stay shared, so UV itself is a safe mid-UV fallback.
+    targetVertex.mc_midTexCoordU = finalTexCoord.x;
+    targetVertex.mc_midTexCoordV = finalTexCoord.y;
+    targetVertex.at_tangent = int(packSnorm4x8(vec4(tangent, 1.0)));
+    #else
     targetVertex.iris_Entity0 = 0u;
     targetVertex.iris_Entity1 = 0u;
     targetVertex.mc_midTexCoordU = 0.0;
     targetVertex.mc_midTexCoordV = 0.0;
     targetVertex.at_tangent = 0;
+    #endif
     #endif// IRIS_VERTEX_FORMAT
 
     TargetVertices[vertexId] = targetVertex;

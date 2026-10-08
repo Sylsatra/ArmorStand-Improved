@@ -72,7 +72,9 @@ uniform isamplerBuffer MorphTargetIndices;
 #define MORPH_INSTANCE_ID 0
 #endif// INSTANCED
 
-#if defined(COMPUTE_SHADER) && defined(IRIS_VERTEX_FORMAT)
+#if defined(COMPUTE_SHADER) && defined(IRIS_DIRECT_VERTEX_FORMAT)
+#define MORPH_VERTEX_ID int(gl_GlobalInvocationID.x)
+#elif defined(COMPUTE_SHADER) && defined(IRIS_VERTEX_FORMAT)
 #define MORPH_VERTEX_ID int(IrisTriangleIndices[gl_GlobalInvocationID.x])
 #elif defined(COMPUTE_SHADER)
 #define MORPH_VERTEX_ID int(gl_GlobalInvocationID.x)
