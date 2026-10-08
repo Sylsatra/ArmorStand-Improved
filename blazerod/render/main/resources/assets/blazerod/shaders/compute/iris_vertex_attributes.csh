@@ -7,6 +7,15 @@
 #error COMPUTE_LOCAL_SIZE not defined
 #endif// COMPUTE_LOCAL_SIZE
 
+struct SourceVertex {
+    vec3 position;
+    uint color;
+    vec2 uv0;
+    uint uv1;
+    uint uv2;
+    uint normal;
+};
+
 struct TargetVertex {
     vec3 position;
     uint color;
@@ -21,8 +30,16 @@ struct TargetVertex {
     uint at_tangent;
 };
 
+layout(std430) readonly buffer SourceVertexData {
+    SourceVertex[] SourceVertices;
+};
+
 layout(std430) buffer TargetVertexData {
     TargetVertex[] TargetVertices;
+};
+
+layout(std430) readonly buffer IrisTriangleIndicesData {
+    uint IrisTriangleIndices[];
 };
 
 layout(std140) uniform ComputeData {
@@ -54,61 +71,19 @@ uint packTangent(vec3 tangent, float handedness) {
         | ((uint(tangentBytes.w) & 255u) << 24u);
 }
 
-void main() {
-    uint vertexId = gl_GlobalInvocationID.x;
-    if (vertexId >= TotalVerticesCount) {
-        return;
-    }
+vec2 safeMidUv(vec2 uv) {
+    return vec2(finiteFloat(uv.x) ? uv.x : 0.0, finiteFloat(uv.y) ? uv.y : 0.0);
+}
 
-    TargetVertex vertex = TargetVertices[vertexId];
+TargetVertex writeIrisAttributes(
+    TargetVertex vertex,
+    vec2 midUv,
+    vec3 tangent,
+    vec3 bitangent,
+    vec3 generatedNormal
+) {
     vertex.iris_Entity0 = IrisEntity0;
     vertex.iris_Entity1 = IrisEntity1;
-
-    float midU = finiteFloat(vertex.uv0.x) ? vertex.uv0.x : 0.0;
-    float midV = finiteFloat(vertex.uv0.y) ? vertex.uv0.y : 0.0;
-    vec3 tangent = vec3(0.0);
-    vec3 bitangent = vec3(0.0);
-    vec3 generatedNormal = vec3(0.0);
-
-    if (IrisExpanded != 0u) {
-        uint triangleStart = (vertexId / 3u) * 3u;
-        uint corner = vertexId % 3u;
-        uint firstId = triangleStart + ((corner + 1u) % 3u);
-        uint secondId = triangleStart + ((corner + 2u) % 3u);
-        TargetVertex first = TargetVertices[firstId];
-        TargetVertex second = TargetVertices[secondId];
-
-        float candidateU = (vertex.uv0.x + first.uv0.x + second.uv0.x) / 3.0;
-        float candidateV = (vertex.uv0.y + first.uv0.y + second.uv0.y) / 3.0;
-        if (finiteFloat(candidateU) && finiteFloat(candidateV)) {
-            midU = candidateU;
-            midV = candidateV;
-        }
-
-        vec3 edge1 = first.position - vertex.position;
-        vec3 edge2 = second.position - vertex.position;
-        edge1 = (ModelTangentMatrix * vec4(edge1, 0.0)).xyz;
-        edge2 = (ModelTangentMatrix * vec4(edge2, 0.0)).xyz;
-        float du1 = first.uv0.x - vertex.uv0.x;
-        float dv1 = first.uv0.y - vertex.uv0.y;
-        float du2 = second.uv0.x - vertex.uv0.x;
-        float dv2 = second.uv0.y - vertex.uv0.y;
-        float determinant = du1 * dv2 - du2 * dv1;
-        vec3 faceNormal = cross(edge1, edge2);
-        float area = length(faceNormal);
-        if (finiteFloat(area) && area >= 1e-8) {
-            generatedNormal = faceNormal;
-        }
-        if (finiteFloat(determinant) && abs(determinant) >= 1e-8 && finiteFloat(area) && area >= 1e-8) {
-            float weight = area / determinant;
-            vec3 faceTangent = (edge1 * dv2 - edge2 * dv1) * weight;
-            vec3 faceBitangent = (edge2 * du1 - edge1 * du2) * weight;
-            if (finiteVec3(faceTangent) && finiteVec3(faceBitangent)) {
-                tangent = faceTangent;
-                bitangent = faceBitangent;
-            }
-        }
-    }
 
     vec3 normal = unpackSnorm4x8(vertex.normal).xyz;
 #ifdef GENERATE_NORMALS
@@ -135,8 +110,90 @@ void main() {
     tangent = normalize(tangent);
     float handedness = dot(cross(tangent, normal), bitangent) < 0.0 ? -1.0 : 1.0;
 
-    vertex.mc_midTexCoordU = midU;
-    vertex.mc_midTexCoordV = midV;
+    vertex.mc_midTexCoordU = midUv.x;
+    vertex.mc_midTexCoordV = midUv.y;
     vertex.at_tangent = packTangent(tangent, handedness);
-    TargetVertices[vertexId] = vertex;
+    return vertex;
+}
+
+void main() {
+    uint workItem = gl_GlobalInvocationID.x;
+    if (IrisExpanded == 0u) {
+        if (workItem >= TotalVerticesCount) {
+            return;
+        }
+        TargetVertex vertex = SourceVertices[IrisTriangleIndices[workItem]];
+        TargetVertices[workItem] = writeIrisAttributes(
+            vertex,
+            safeMidUv(vertex.uv0),
+            vec3(0.0),
+            vec3(0.0),
+            vec3(0.0)
+        );
+        return;
+    }
+
+    uint triangleStart = workItem * 3u;
+    if (triangleStart + 2u >= TotalVerticesCount) {
+        return;
+    }
+
+    uint source0 = IrisTriangleIndices[triangleStart];
+    uint source1 = IrisTriangleIndices[triangleStart + 1u];
+    uint source2 = IrisTriangleIndices[triangleStart + 2u];
+    TargetVertex vertex0 = SourceVertices[source0];
+    TargetVertex vertex1 = SourceVertices[source1];
+    TargetVertex vertex2 = SourceVertices[source2];
+
+    vec2 midUv = safeMidUv(vertex0.uv0);
+    float candidateU = (vertex0.uv0.x + vertex1.uv0.x + vertex2.uv0.x) / 3.0;
+    float candidateV = (vertex0.uv0.y + vertex1.uv0.y + vertex2.uv0.y) / 3.0;
+    bool validMidUv = finiteFloat(candidateU) && finiteFloat(candidateV);
+    if (validMidUv) {
+        midUv = vec2(candidateU, candidateV);
+    }
+
+    vec3 edge1 = (ModelTangentMatrix * vec4(vertex1.position - vertex0.position, 0.0)).xyz;
+    vec3 edge2 = (ModelTangentMatrix * vec4(vertex2.position - vertex0.position, 0.0)).xyz;
+    float du1 = vertex1.uv0.x - vertex0.uv0.x;
+    float dv1 = vertex1.uv0.y - vertex0.uv0.y;
+    float du2 = vertex2.uv0.x - vertex0.uv0.x;
+    float dv2 = vertex2.uv0.y - vertex0.uv0.y;
+    float determinant = du1 * dv2 - du2 * dv1;
+    vec3 faceNormal = cross(edge1, edge2);
+    float area = length(faceNormal);
+    vec3 generatedNormal = finiteFloat(area) && area >= 1e-8 ? faceNormal : vec3(0.0);
+    vec3 tangent = vec3(0.0);
+    vec3 bitangent = vec3(0.0);
+    if (finiteFloat(determinant) && abs(determinant) >= 1e-8 && finiteFloat(area) && area >= 1e-8) {
+        float weight = area / determinant;
+        vec3 faceTangent = (edge1 * dv2 - edge2 * dv1) * weight;
+        vec3 faceBitangent = (edge2 * du1 - edge1 * du2) * weight;
+        if (finiteVec3(faceTangent) && finiteVec3(faceBitangent)) {
+            tangent = faceTangent;
+            bitangent = faceBitangent;
+        }
+    }
+
+    TargetVertices[triangleStart] = writeIrisAttributes(
+        vertex0,
+        validMidUv ? midUv : safeMidUv(vertex0.uv0),
+        tangent,
+        bitangent,
+        generatedNormal
+    );
+    TargetVertices[triangleStart + 1u] = writeIrisAttributes(
+        vertex1,
+        validMidUv ? midUv : safeMidUv(vertex1.uv0),
+        tangent,
+        bitangent,
+        generatedNormal
+    );
+    TargetVertices[triangleStart + 2u] = writeIrisAttributes(
+        vertex2,
+        validMidUv ? midUv : safeMidUv(vertex2.uv0),
+        tangent,
+        bitangent,
+        generatedNormal
+    );
 }

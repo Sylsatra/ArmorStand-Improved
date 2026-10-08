@@ -210,7 +210,9 @@ class ComputeShaderTransformRenderer private constructor() :
                     if (generateNormals) {
                         withShaderDefine("GENERATE_NORMALS")
                     }
+                    withStorageBuffer("SourceVertexData")
                     withStorageBuffer("TargetVertexData")
+                    withStorageBuffer("IrisTriangleIndicesData")
                     withUniform("ComputeData", UniformType.UNIFORM_BUFFER)
                     withShaderDefine("COMPUTE_LOCAL_SIZE", BlazeRod.COMPUTE_LOCAL_SIZE)
                 }.build()
@@ -262,24 +264,50 @@ class ComputeShaderTransformRenderer private constructor() :
         } else {
             null
         }
-        val targetVertexData: GpuBufferSlice
+        val transformVertexFormat = if (irisVertexFormat) {
+            BlazerodVertexFormats.ENTITY_PADDED
+        } else {
+            targetVertexFormat
+        }
+        val transformedVertexData = vertexDataPool.allocate(
+            transformVertexFormat.vertexSize * primitive.vertices,
+        )
+        val targetVertexData = if (irisVertexFormat) {
+            vertexDataPool.allocate(targetVertexFormat.vertexSize * outputVertices)
+        } else {
+            transformedVertexData
+        }
         val computeDataUniformBufferSlice: GpuBufferSlice
+        val irisAttributeData: GpuBufferSlice?
         var skinModelIndicesBufferSlice: GpuBufferSlice? = null
         var skinJointBufferSlice: GpuBufferSlice? = null
         var morphDataUniformBufferSlice: GpuBufferSlice? = null
         var morphWeightsBufferSlice: GpuBufferSlice? = null
         var morphTargetIndicesBufferSlice: GpuBufferSlice? = null
 
-        targetVertexData = vertexDataPool.allocate(targetVertexFormat.vertexSize * outputVertices)
         computeDataUniformBufferSlice = ComputeDataUniformBuffer.write {
             this.modelNormalMatrix = modelNormalMatrix
-            totalVertices = outputVertices.toUInt()
+            totalVertices = primitive.vertices.toUInt()
             uv1 = OverlayTexture.NO_OVERLAY.toUInt()
             uv2 = task.light.toUInt()
             this.modelTangentMatrix = modelTangentMatrix
             irisEntity0 = task.irisEntityIds.packed0
             irisEntity1 = task.irisEntityIds.packed1
-            this.irisExpanded = if (irisExpanded) 1u else 0u
+            this.irisExpanded = 0u
+        }
+        irisAttributeData = if (irisVertexFormat) {
+            ComputeDataUniformBuffer.write {
+                this.modelNormalMatrix = modelNormalMatrix
+                totalVertices = outputVertices.toUInt()
+                uv1 = OverlayTexture.NO_OVERLAY.toUInt()
+                uv2 = task.light.toUInt()
+                this.modelTangentMatrix = modelTangentMatrix
+                irisEntity0 = task.irisEntityIds.packed0
+                irisEntity1 = task.irisEntityIds.packed1
+                this.irisExpanded = if (irisExpanded) 1u else 0u
+            }
+        } else {
+            null
         }
         skinBuffer?.let { skinBuffer ->
             skinModelIndicesBufferSlice = SkinModelIndicesUniformBuffer.write {
@@ -304,7 +332,7 @@ class ComputeShaderTransformRenderer private constructor() :
 
         val pipeline = getPipeline(
             material = material,
-            irisVertexFormat = irisVertexFormat,
+            irisVertexFormat = false,
             irisSourceNormals = irisSourceNormals != null,
         )
         val attributePipeline = if (irisVertexFormat) {
@@ -318,12 +346,22 @@ class ComputeShaderTransformRenderer private constructor() :
 
         return ComputeOutput(
             vertexBuffer = targetVertexData,
+            transformedVertexBuffer = transformedVertexData,
             vertices = outputVertices,
+            transformVertices = primitive.vertices,
+            irisAttributeInvocations = if (!irisVertexFormat) {
+                0
+            } else if (irisExpanded) {
+                outputVertices / 3
+            } else {
+                outputVertices
+            },
             mode = outputMode,
             useIndexBuffer = !irisExpanded && primitive.indexBuffer != null,
             primitive = primitive,
             pipeline = pipeline,
             computeData = computeDataUniformBufferSlice,
+            irisAttributeData = irisAttributeData,
             irisSourceIndices = irisSourceIndices,
             irisSourceNormals = irisSourceNormals,
             skinModelIndices = skinModelIndicesBufferSlice,
@@ -337,12 +375,16 @@ class ComputeShaderTransformRenderer private constructor() :
 
     private data class ComputeOutput(
         val vertexBuffer: GpuBufferSlice,
+        val transformedVertexBuffer: GpuBufferSlice,
         val vertices: Int,
+        val transformVertices: Int,
+        val irisAttributeInvocations: Int,
         val mode: VertexFormat.Mode,
         val useIndexBuffer: Boolean,
         val primitive: RenderPrimitive,
         val pipeline: ComputePipeline,
         val computeData: GpuBufferSlice,
+        val irisAttributeData: GpuBufferSlice?,
         val irisSourceIndices: GpuBufferSlice?,
         val irisSourceNormals: GpuBufferSlice?,
         val skinModelIndices: GpuBufferSlice?,
@@ -365,8 +407,7 @@ class ComputeShaderTransformRenderer private constructor() :
             }
         }
         pass.setStorageBuffer("SourceVertexData", primitive.gpuVertexBuffer!!.inner.slice())
-        pass.setStorageBuffer("TargetVertexData", output.vertexBuffer)
-        output.irisSourceIndices?.let { pass.setStorageBuffer("IrisTriangleIndicesData", it) }
+        pass.setStorageBuffer("TargetVertexData", output.transformedVertexBuffer)
         output.irisSourceNormals?.let { pass.setStorageBuffer("IrisSourceNormalsData", it) }
         pass.setUniform("ComputeData", output.computeData)
         output.skinJoints?.let { skinJointBuffer ->
@@ -397,15 +438,17 @@ class ComputeShaderTransformRenderer private constructor() :
             pass.setStorageBuffer("MorphColorBlock", targets.color.slice!!)
             pass.setStorageBuffer("MorphTexCoordBlock", targets.texCoord.slice!!)
         }
-        pass.dispatch(output.vertices ceilDiv BlazeRod.COMPUTE_LOCAL_SIZE, 1, 1)
+        pass.dispatch(output.transformVertices ceilDiv BlazeRod.COMPUTE_LOCAL_SIZE, 1, 1)
     }
 
     private fun dispatchIrisAttributes(output: ComputeOutput, pass: ComputePass) {
         val pipeline = output.irisAttributePipeline ?: return
         pass.setPipeline(pipeline)
+        pass.setStorageBuffer("SourceVertexData", output.transformedVertexBuffer)
         pass.setStorageBuffer("TargetVertexData", output.vertexBuffer)
-        pass.setUniform("ComputeData", output.computeData)
-        pass.dispatch(output.vertices ceilDiv BlazeRod.COMPUTE_LOCAL_SIZE, 1, 1)
+        pass.setStorageBuffer("IrisTriangleIndicesData", requireNotNull(output.irisSourceIndices))
+        pass.setUniform("ComputeData", requireNotNull(output.irisAttributeData))
+        pass.dispatch(output.irisAttributeInvocations ceilDiv BlazeRod.COMPUTE_LOCAL_SIZE, 1, 1)
     }
 
     private class ComputeItem private constructor() {
