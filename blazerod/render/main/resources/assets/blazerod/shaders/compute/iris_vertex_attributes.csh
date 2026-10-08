@@ -116,6 +116,7 @@ TargetVertex writeIrisAttributes(
         normal = normalize(normal);
     }
 
+#ifdef GENERATE_TANGENTS
     tangent -= normal * dot(tangent, normal);
     float tangentLengthSquared = dot(tangent, tangent);
     if (!finiteFloat(tangentLengthSquared) || tangentLengthSquared < 1e-8) {
@@ -125,6 +126,13 @@ TargetVertex writeIrisAttributes(
     }
     tangent = normalize(tangent);
     float handedness = dot(cross(tangent, normal), bitangent) < 0.0 ? -1.0 : 1.0;
+#else// GENERATE_TANGENTS
+    tangent = abs(normal.y) < 0.999
+        ? vec3(normal.z, 0.0, -normal.x)
+        : vec3(0.0, -normal.z, normal.y);
+    tangent = normalize(tangent);
+    float handedness = 1.0;
+#endif// GENERATE_TANGENTS
 
     vertex.mc_midTexCoordU = midUv.x;
     vertex.mc_midTexCoordV = midUv.y;
@@ -169,18 +177,25 @@ void main() {
         midUv = vec2(candidateU, candidateV);
     }
 
+    vec3 tangent = vec3(0.0);
+    vec3 bitangent = vec3(0.0);
+#if defined(GENERATE_TANGENTS) || defined(GENERATE_NORMALS)
     vec3 edge1 = (ModelTangentMatrix * vec4(vertex1.position - vertex0.position, 0.0)).xyz;
     vec3 edge2 = (ModelTangentMatrix * vec4(vertex2.position - vertex0.position, 0.0)).xyz;
+    vec3 faceNormal = cross(edge1, edge2);
+#endif
+#ifdef GENERATE_NORMALS
+    vec3 generatedNormal = faceNormal;
+#else
+    vec3 generatedNormal = vec3(0.0);
+#endif// GENERATE_NORMALS
+#ifdef GENERATE_TANGENTS
     float du1 = vertex1.uv0.x - vertex0.uv0.x;
     float dv1 = vertex1.uv0.y - vertex0.uv0.y;
     float du2 = vertex2.uv0.x - vertex0.uv0.x;
     float dv2 = vertex2.uv0.y - vertex0.uv0.y;
     float determinant = du1 * dv2 - du2 * dv1;
-    vec3 faceNormal = cross(edge1, edge2);
     float area = length(faceNormal);
-    vec3 generatedNormal = finiteFloat(area) && area >= 1e-8 ? faceNormal : vec3(0.0);
-    vec3 tangent = vec3(0.0);
-    vec3 bitangent = vec3(0.0);
     if (finiteFloat(determinant) && abs(determinant) >= 1e-8 && finiteFloat(area) && area >= 1e-8) {
         float weight = area / determinant;
         vec3 faceTangent = (edge1 * dv2 - edge2 * dv1) * weight;
@@ -190,6 +205,7 @@ void main() {
             bitangent = faceBitangent;
         }
     }
+#endif// GENERATE_TANGENTS
 
     TargetVertices[triangleStart] = writeIrisAttributes(
         vertex0,

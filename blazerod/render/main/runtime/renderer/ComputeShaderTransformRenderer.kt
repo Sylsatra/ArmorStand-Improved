@@ -144,7 +144,8 @@ class ComputeShaderTransformRenderer private constructor() :
         override fun create() = ComputeShaderTransformRenderer()
 
         private val pipelineCache = mutableMapOf<RenderMaterial.Descriptor, Int2ReferenceMap<ComputePipeline>>()
-        private val irisAttributePipelineCache = mutableMapOf<Pair<RenderMaterial.Descriptor, Boolean>, ComputePipeline>()
+        private val irisAttributePipelineCache =
+            mutableMapOf<Triple<RenderMaterial.Descriptor, Boolean, Boolean>, ComputePipeline>()
 
         private fun getPipeline(
             material: RenderMaterial<*>,
@@ -196,8 +197,12 @@ class ComputeShaderTransformRenderer private constructor() :
             }
         }
 
-        private fun getIrisAttributePipeline(material: RenderMaterial<*>, generateNormals: Boolean): ComputePipeline =
-            irisAttributePipelineCache.getOrPut(material.descriptor to generateNormals) {
+        private fun getIrisAttributePipeline(
+            material: RenderMaterial<*>,
+            generateNormals: Boolean,
+            generateTangents: Boolean,
+        ): ComputePipeline =
+            irisAttributePipelineCache.getOrPut(Triple(material.descriptor, generateNormals, generateTangents)) {
                 ComputePipeline.builder().apply {
                     withLocation(ResourceLocation.fromNamespaceAndPath(
                         "blazerod",
@@ -209,6 +214,9 @@ class ComputeShaderTransformRenderer private constructor() :
                     withShaderDefine("IRIS_VERTEX_FORMAT")
                     if (generateNormals) {
                         withShaderDefine("GENERATE_NORMALS")
+                    }
+                    if (generateTangents) {
+                        withShaderDefine("GENERATE_TANGENTS")
                     }
                     withStorageBuffer("SourceVertexData")
                     withStorageBuffer("TargetVertexData")
@@ -339,6 +347,9 @@ class ComputeShaderTransformRenderer private constructor() :
             getIrisAttributePipeline(
                 material = material,
                 generateNormals = material.descriptor.id == 0 && primitive.vertexNormals == null,
+                // BlazeRod's Unlit materials have no normal-map input. Keep their Iris
+                // tangent attribute valid, but avoid deriving a full tangent basis per triangle.
+                generateTangents = material.descriptor.id != 0,
             )
         } else {
             null
