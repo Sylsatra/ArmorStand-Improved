@@ -40,20 +40,38 @@ vec4 skinPositionTransform(vec4 position, vec4 weight, ivec4 joint_indices) {
     if (weight == vec4(0.0)) {
         return position;
     }
-    vec4 posX = getJointPositionMatrix(joint_indices.x) * position;
-    vec4 posY = getJointPositionMatrix(joint_indices.y) * position;
-    vec4 posZ = getJointPositionMatrix(joint_indices.z) * position;
-    vec4 posW = getJointPositionMatrix(joint_indices.w) * position;
-    return posX * weight.x + posY * weight.y + posZ * weight.z + posW * weight.w;
+    vec4 result = vec4(0.0);
+    if (weight.x != 0.0 && joint_indices.x >= 0) {
+        result += (getJointPositionMatrix(joint_indices.x) * position) * weight.x;
+    }
+    if (weight.y != 0.0 && joint_indices.y >= 0) {
+        result += (getJointPositionMatrix(joint_indices.y) * position) * weight.y;
+    }
+    if (weight.z != 0.0 && joint_indices.z >= 0) {
+        result += (getJointPositionMatrix(joint_indices.z) * position) * weight.z;
+    }
+    if (weight.w != 0.0 && joint_indices.w >= 0) {
+        result += (getJointPositionMatrix(joint_indices.w) * position) * weight.w;
+    }
+    return result;
 }
 
 vec3 skinNormalTransform(vec3 normal, vec4 weight, ivec4 joint_indices) {
     if (weight == vec4(0.0)) {
         return normal;
     }
-    vec3 posX = getJointNormalMatrix(joint_indices.x) * normal;
-    vec3 posY = getJointNormalMatrix(joint_indices.y) * normal;
-    vec3 posZ = getJointNormalMatrix(joint_indices.z) * normal;
-    vec3 posW = getJointNormalMatrix(joint_indices.w) * normal;
-    return posX * weight.x + posY * weight.y + posZ * weight.z + posW * weight.w;
+    vec3 result = vec3(0.0);
+    if (weight.x != 0.0 && joint_indices.x >= 0) {
+        result += (getJointNormalMatrix(joint_indices.x) * normal) * weight.x;
+    }
+    if (weight.y != 0.0 && joint_indices.y >= 0) {
+        result += (getJointNormalMatrix(joint_indices.y) * normal) * weight.y;
+    }
+    if (weight.z != 0.0 && joint_indices.z >= 0) {
+        result += (getJointNormalMatrix(joint_indices.z) * normal) * weight.z;
+    }
+    if (weight.w != 0.0 && joint_indices.w >= 0) {
+        result += (getJointNormalMatrix(joint_indices.w) * normal) * weight.w;
+    }
+    return result;
 }
