@@ -35,6 +35,9 @@ cc_library(
 cc_test(
     name = "kinematic_substeps_test",
     srcs = ["test/KinematicSubstepsTest.cpp"],
+    # The cross toolchain emits shared-library paths relative to the execroot;
+    # they cannot be resolved from the test's runfiles sandbox.
+    linkstatic = True,
     visibility = ["//blazerod/render:__pkg__"],
     deps = [":bullet_binding"],
 )
