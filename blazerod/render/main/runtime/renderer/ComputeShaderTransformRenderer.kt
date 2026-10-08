@@ -586,17 +586,21 @@ class ComputeShaderTransformRenderer private constructor() :
 
         if (preparedItems.isNotEmpty()) {
             val commandEncoder = RenderSystem.getDevice().createCommandEncoder()
-            commandEncoder.createComputePass { "BlazeRod transform batch" }.use { pass ->
-                for (item in preparedItems) {
-                    dispatchCompute(item.computeOutput, pass)
+            BlazeRodGpuTimer.measure(BlazeRodGpuTimer.TRANSFORM) {
+                commandEncoder.createComputePass { "BlazeRod transform batch" }.use { pass ->
+                    for (item in preparedItems) {
+                        dispatchCompute(item.computeOutput, pass)
+                    }
                 }
             }
 
             if (IrisApis.shaderPackInUse) {
                 commandEncoder.memoryBarrier(CommandEncoderExt.BARRIER_STORAGE_BUFFER_BIT)
-                commandEncoder.createComputePass { "BlazeRod Iris attribute batch" }.use { pass ->
-                    for (item in preparedItems) {
-                        dispatchIrisAttributes(item.computeOutput, pass)
+                BlazeRodGpuTimer.measure(BlazeRodGpuTimer.IRIS_ATTRIBUTES) {
+                    commandEncoder.createComputePass { "BlazeRod Iris attribute batch" }.use { pass ->
+                        for (item in preparedItems) {
+                            dispatchIrisAttributes(item.computeOutput, pass)
+                        }
                     }
                 }
             }
@@ -614,6 +618,7 @@ class ComputeShaderTransformRenderer private constructor() :
             }
         }
         if (computeItems.isEmpty()) {
+            BlazeRodGpuTimer.reportIfReady()
             return
         }
 
@@ -621,66 +626,68 @@ class ComputeShaderTransformRenderer private constructor() :
         val commandEncoder = device.createCommandEncoder()
         commandEncoder.memoryBarrier(CommandEncoderExt.BARRIER_STORAGE_BUFFER_BIT or CommandEncoderExt.BARRIER_VERTEX_BUFFER_BIT)
 
-        for (stage in 0..2) {
-            if (computeItems.none {
-                    EntityMaterialPipelines.stageOrder(it.primitiveComponent.primitive.material) == stage
-                }) {
-                continue
-            }
+        BlazeRodGpuTimer.measure(BlazeRodGpuTimer.DRAW) {
+            for (stage in 0..2) {
+                if (computeItems.none {
+                        EntityMaterialPipelines.stageOrder(it.primitiveComponent.primitive.material) == stage
+                    }) {
+                    continue
+                }
 
-            commandEncoder.createRenderPass(
-                { "BlazeRod render stage $stage" },
-                colorFrameBuffer,
-                OptionalInt.empty(),
-                depthFrameBuffer,
-                OptionalDouble.empty()
-            ).use { renderPass ->
-                for (item in computeItems) {
-                    val task = item.renderTask
-                    val primitiveComponent = item.primitiveComponent
-                    val primitive = primitiveComponent.primitive
-                    val material = primitive.material
-                    if (EntityMaterialPipelines.stageOrder(material) != stage) {
-                        continue
-                    }
+                commandEncoder.createRenderPass(
+                    { "BlazeRod render stage $stage" },
+                    colorFrameBuffer,
+                    OptionalInt.empty(),
+                    depthFrameBuffer,
+                    OptionalDouble.empty()
+                ).use { renderPass ->
+                    for (item in computeItems) {
+                        val task = item.renderTask
+                        val primitiveComponent = item.primitiveComponent
+                        val primitive = primitiveComponent.primitive
+                        val material = primitive.material
+                        if (EntityMaterialPipelines.stageOrder(material) != stage) {
+                            continue
+                        }
 
-                    task.localMatricesBuffer.content.getPositionMatrix(
-                        primitiveComponent.primitiveIndex,
-                        modelMatrix,
-                    )
-                    modelMatrix.mulLocal(task.modelMatrix)
-                    modelMatrix.mulLocal(RenderSystem.getModelViewStack())
-
-                    val dynamicUniforms = RenderSystem.getDynamicUniforms().writeTransform(
-                        modelMatrix,
-                        material.baseColor.toVector4f(baseColor),
-                        RenderSystem.getModelOffset(),
-                        RenderSystem.getTextureMatrix(),
-                        RenderSystem.getShaderLineWidth()
-                    )
-
-                    with(renderPass) {
-                        setPipeline(EntityMaterialPipelines.pipeline(material))
-                        RenderSystem.bindDefaultUniforms(this)
-                        setUniform("DynamicTransforms", dynamicUniforms)
-                        bindSampler(
-                            "Sampler2",
-                            Minecraft.getInstance().gameRenderer.lightTexture().textureView
+                        task.localMatricesBuffer.content.getPositionMatrix(
+                            primitiveComponent.primitiveIndex,
+                            modelMatrix,
                         )
-                        bindSampler(
-                            "Sampler1",
-                            Minecraft.getInstance().gameRenderer.overlayTexture().texture.textureView
-                        )
-                        EntityMaterialPipelines.bindBaseColor(this, material)
+                        modelMatrix.mulLocal(task.modelMatrix)
+                        modelMatrix.mulLocal(RenderSystem.getModelViewStack())
 
-                        setVertexFormat(item.vertexFormat)
-                        setVertexFormatMode(item.computeOutput.mode)
-                        setVertexBuffer(0, item.computeOutput.vertexBuffer.buffer())
-                        primitive.indexBuffer?.takeIf { item.computeOutput.useIndexBuffer }?.let { indices ->
-                            setIndexBuffer(indices)
-                            drawIndexed(0, 0, indices.length, 1)
-                        } ?: run {
-                            draw(0, item.computeOutput.vertices)
+                        val dynamicUniforms = RenderSystem.getDynamicUniforms().writeTransform(
+                            modelMatrix,
+                            material.baseColor.toVector4f(baseColor),
+                            RenderSystem.getModelOffset(),
+                            RenderSystem.getTextureMatrix(),
+                            RenderSystem.getShaderLineWidth()
+                        )
+
+                        with(renderPass) {
+                            setPipeline(EntityMaterialPipelines.pipeline(material))
+                            RenderSystem.bindDefaultUniforms(this)
+                            setUniform("DynamicTransforms", dynamicUniforms)
+                            bindSampler(
+                                "Sampler2",
+                                Minecraft.getInstance().gameRenderer.lightTexture().textureView
+                            )
+                            bindSampler(
+                                "Sampler1",
+                                Minecraft.getInstance().gameRenderer.overlayTexture().texture.textureView
+                            )
+                            EntityMaterialPipelines.bindBaseColor(this, material)
+
+                            setVertexFormat(item.vertexFormat)
+                            setVertexFormatMode(item.computeOutput.mode)
+                            setVertexBuffer(0, item.computeOutput.vertexBuffer.buffer())
+                            primitive.indexBuffer?.takeIf { item.computeOutput.useIndexBuffer }?.let { indices ->
+                                setIndexBuffer(indices)
+                                drawIndexed(0, 0, indices.length, 1)
+                            } ?: run {
+                                draw(0, item.computeOutput.vertices)
+                            }
                         }
                     }
                 }
@@ -690,6 +697,7 @@ class ComputeShaderTransformRenderer private constructor() :
         computeItems.clear()
         renderTasks.forEach { it.release() }
         renderTasks.clear()
+        BlazeRodGpuTimer.reportIfReady()
     }
 
     override fun render(
@@ -807,5 +815,6 @@ class ComputeShaderTransformRenderer private constructor() :
         renderTasks.clear()
         dataPool.close()
         vertexDataPool.close()
+        BlazeRodGpuTimer.close()
     }
 }
