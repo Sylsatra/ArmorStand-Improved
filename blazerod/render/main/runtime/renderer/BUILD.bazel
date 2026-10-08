@@ -32,5 +32,6 @@ kt_merge_library(
         "@maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core_jvm",
         "@maven//:org_joml_joml",
         "@maven//:org_lwjgl_lwjgl",
+        "@minecraft//1.21.8:client_libraries",
     ],
 )
