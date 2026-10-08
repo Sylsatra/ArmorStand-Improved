@@ -1367,6 +1367,47 @@ class PmxLoader : ModelFileLoader {
                 }
             }
 
+            // PMX masks must agree in both directions for Bullet to create a
+            // contact pair. Use the related bone name as well as the body name;
+            // converted models often name the collider in English but its bone
+            // in Japanese (for example, RB_shoulder_L attached to 左肩).
+            val rigidBodySemanticNames = rigidBodies.map { rigidBody ->
+                "${rigidBody.nameLocal} ${bones.getOrNull(rigidBody.relatedBoneIndex)?.nameLocal.orEmpty()}"
+                    .lowercase()
+            }
+            val bodyGroupMask = rigidBodies.indices
+                .filter { index ->
+                    val name = rigidBodySemanticNames[index]
+                    name.contains("body") || name.contains("体") || name.contains("腕") || name.contains("arm") ||
+                        name.contains("肉") || name.contains("leg") || name.contains("足") ||
+                        name.contains("hand") || name.contains("手") || name.contains("lower") ||
+                        name.contains("upper") || name.contains("身") || name.contains("頭") ||
+                        name.contains("首") || name.contains("膝") || name.contains("肘") ||
+                        name.contains("肩") || name.contains("shoulder") || name.contains("neck") ||
+                        name.contains("head") || name.contains("face") || name.contains("pelvis") ||
+                        name.contains("torso") || name.contains("waist") || name.contains("spine") ||
+                        name.contains("胸") || name.contains("腰") || name.contains("ひざ") ||
+                        name.contains("しり") || name.contains("おしり") || name.contains("センター") ||
+                        name.contains("中心")
+                }
+                .fold(0) { acc, index -> acc or (1 shl rigidBodies[index].groupId) }
+            val shoulderGroupMask = rigidBodies.indices
+                .filter { index ->
+                    val name = rigidBodySemanticNames[index]
+                    name.contains("肩") || name.contains("shoulder") || name.contains("clavicle")
+                }
+                .fold(0) { acc, index -> acc or (1 shl rigidBodies[index].groupId) }
+            val simulatedHairGroupMask = rigidBodies.indices
+                .filter { index ->
+                    val name = rigidBodySemanticNames[index]
+                    val isHair = name.contains("hair") || name.contains("发") || name.contains("髪") ||
+                        name.contains("bang") || name.contains("strand") || name.contains("front") ||
+                        name.contains("back") || name.contains("ahoge") || name.contains("side") ||
+                        name.contains("tail")
+                    isHair && rigidBodies[index].physicsMode != PmxRigidBody.PhysicsMode.FOLLOW_BONE
+                }
+                .fold(0) { acc, index -> acc or (1 shl rigidBodies[index].groupId) }
+
             fun addBone(index: Int, parentPosition: Vector3fc? = null, depth: Int = 0): Node {
                 val bone = bones[index]
                 val boneNodeId = NodeId(modelId, index)
@@ -1421,13 +1462,6 @@ class PmxLoader : ModelFileLoader {
                             )
                         )
                     }
-
-                    val garmentGroupMask = rigidBodies.filter {
-                        val n = it.nameLocal.lowercase()
-                        n.contains("vest") || n.contains("shirt") || n.contains("coat") ||
-                        n.contains("jacket") || n.contains("suit") || n.contains("dress") ||
-                        n.contains("inner") || n.contains("outer") || n.contains("服") || n.contains("衣")
-                    }.fold(0) { acc, rb -> acc or (1 shl rb.groupId) }
 
                     boneToRigidBodyMap[index]?.forEach { index ->
                         val rigidBody = rigidBodies[index]
@@ -1485,29 +1519,15 @@ class PmxLoader : ModelFileLoader {
                                      val baseGroup = 1 shl rigidBody.groupId
                                      val baseCollisionMask = (rigidBody.nonCollisionGroup.inv() and 0xFFFF).toInt()
                                      
-                                     // Identify all body-related rigid bodies to exclude from collision
-                                     val bodyGroupMask = rigidBodies.indices
-                                        .filter { i -> 
-                                            val n = rigidBodies[i].nameLocal.lowercase()
-                                            n.contains("body") || n.contains("体") || n.contains("腕") || n.contains("arm") || n.contains("肉") ||
-                                            n.contains("leg") || n.contains("足") || n.contains("hand") || n.contains("手") ||
-                                            n.contains("lower") || n.contains("upper") || n.contains("身") || n.contains("頭") || n.contains("首") ||
-                                            n.contains("膝") || n.contains("肘") || n.contains("肩") || n.contains("ひざ") || n.contains("しり") ||
-                                            n.contains("おしり") || n.contains("腰") || n.contains("センター") || n.contains("中心")
-                                        }
-                                        .fold(0) { acc, i -> acc or (1 shl rigidBodies[i].groupId) }
+                                     val isBodyCollider = (bodyGroupMask and (1 shl rigidBody.groupId)) != 0
                                      
-                                     val isBodyPart = (bodyGroupMask and (1 shl rigidBody.groupId)) != 0 &&
-                                                      !name.contains("頭") && !name.contains("head") &&
-                                                      !name.contains("首") && !name.contains("neck") &&
-                                                      !name.contains("顔") && !name.contains("face")
-
                                      val collisionMask = when {
                                          isHair && depth <= 1 -> {
-                                             baseCollisionMask and bodyGroupMask.inv()
+                                             (baseCollisionMask and bodyGroupMask.inv()) or shoulderGroupMask
                                          }
                                          isBreast -> baseCollisionMask and bodyGroupMask.inv()
                                          isHair -> baseCollisionMask or bodyGroupMask
+                                         isBodyCollider -> baseCollisionMask or simulatedHairGroupMask
                                          isSkirt -> baseCollisionMask
                                          else -> baseCollisionMask
                                      }
