@@ -75,6 +75,22 @@ vec2 safeMidUv(vec2 uv) {
     return vec2(finiteFloat(uv.x) ? uv.x : 0.0, finiteFloat(uv.y) ? uv.y : 0.0);
 }
 
+TargetVertex copyVertex(SourceVertex source) {
+    TargetVertex target;
+    target.position = source.position;
+    target.color = source.color;
+    target.uv0 = source.uv0;
+    target.uv1 = source.uv1;
+    target.uv2 = source.uv2;
+    target.normal = source.normal;
+    target.iris_Entity0 = 0u;
+    target.iris_Entity1 = 0u;
+    target.mc_midTexCoordU = 0.0;
+    target.mc_midTexCoordV = 0.0;
+    target.at_tangent = 0u;
+    return target;
+}
+
 TargetVertex writeIrisAttributes(
     TargetVertex vertex,
     vec2 midUv,
@@ -122,7 +138,7 @@ void main() {
         if (workItem >= TotalVerticesCount) {
             return;
         }
-        TargetVertex vertex = SourceVertices[IrisTriangleIndices[workItem]];
+        TargetVertex vertex = copyVertex(SourceVertices[IrisTriangleIndices[workItem]]);
         TargetVertices[workItem] = writeIrisAttributes(
             vertex,
             safeMidUv(vertex.uv0),
@@ -141,9 +157,9 @@ void main() {
     uint source0 = IrisTriangleIndices[triangleStart];
     uint source1 = IrisTriangleIndices[triangleStart + 1u];
     uint source2 = IrisTriangleIndices[triangleStart + 2u];
-    TargetVertex vertex0 = SourceVertices[source0];
-    TargetVertex vertex1 = SourceVertices[source1];
-    TargetVertex vertex2 = SourceVertices[source2];
+    TargetVertex vertex0 = copyVertex(SourceVertices[source0]);
+    TargetVertex vertex1 = copyVertex(SourceVertices[source1]);
+    TargetVertex vertex2 = copyVertex(SourceVertices[source2]);
 
     vec2 midUv = safeMidUv(vertex0.uv0);
     float candidateU = (vertex0.uv0.x + vertex1.uv0.x + vertex2.uv0.x) / 3.0;
