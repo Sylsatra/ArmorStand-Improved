@@ -1,4 +1,4 @@
-load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 load("@rules_jni//jni:defs.bzl", "jni_headers")
 load("//rule:cc_jni_library.bzl", "cc_jni_library")
 load("//rule:merge_library.bzl", "java_merge_library", "kt_merge_library")
@@ -21,10 +21,8 @@ jni_headers(
 
 cc_library(
     name = "bullet_binding",
-    srcs = glob([
-        "*.cpp",
-        "*.h",
-    ]),
+    srcs = glob(["*.cpp"]),
+    hdrs = glob(["*.h"]),
     deps = [
         ":physics_headers",
         "@bullet//:BulletCollision",
@@ -32,6 +30,13 @@ cc_library(
         "@bullet//:LinearMath",
         "@rules_jni//jni",
     ],
+)
+
+cc_test(
+    name = "kinematic_substeps_test",
+    srcs = ["test/KinematicSubstepsTest.cpp"],
+    visibility = ["//blazerod/render:__pkg__"],
+    deps = [":bullet_binding"],
 )
 
 cc_jni_library(

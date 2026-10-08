@@ -46,6 +46,8 @@ struct RigidBodyData {
 
 class PhysicsWorld {
    private:
+    friend struct PhysicsWorldTestAccess;
+
     std::unique_ptr<btBroadphaseInterface> broadphase;
     std::unique_ptr<btDefaultCollisionConfiguration> collision_config;
     std::unique_ptr<btCollisionDispatcher> dispatcher;

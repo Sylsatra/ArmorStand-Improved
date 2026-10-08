@@ -552,9 +552,18 @@ void PhysicsWorld::Step(float delta_time, int max_sub_steps, float fixed_time_st
             btTransform sub_transform(rot, pos);
             
             rb.rigidbody->setWorldTransform(sub_transform);
-            rb.rigidbody->setInterpolationWorldTransform(sub_transform);
-            rb.rigidbody->setLinearVelocity(up.linVel);
-            rb.rigidbody->setAngularVelocity(up.angVel);
+            if (rb.physics_mode == PhysicsMode::FOLLOW_BONE) {
+                // Bullet reads the motion state again in saveKinematicState().
+                // Publish this substep's pose there, and retain the previous
+                // interpolation transform so Bullet derives the contact velocity
+                // from the actual movement instead of jumping to the final pose.
+                rb.motion_state->SetWorldTransformDirect(sub_transform);
+            } else {
+                // PHYSICS_PLUS_BONE is dynamic; preserve its existing update path.
+                rb.rigidbody->setInterpolationWorldTransform(sub_transform);
+                rb.rigidbody->setLinearVelocity(up.linVel);
+                rb.rigidbody->setAngularVelocity(up.angVel);
+            }
             
             this->world->updateSingleAabb(rb.rigidbody.get());
         }

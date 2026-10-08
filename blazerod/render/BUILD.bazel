@@ -62,6 +62,7 @@ test_suite(
     name = "test",
     tests = [
         "//blazerod/render/main/layout/test",
+        "//blazerod/render/main/physics:kinematic_substeps_test",
         "//blazerod/render/main/runtime/test",
         "//blazerod/render/main/runtime/renderer/test:iris_vertex_attributes_test",
         "//blazerod/render/main/runtime/renderer/test:skinning_normals_test",
